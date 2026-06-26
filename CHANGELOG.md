@@ -2,6 +2,33 @@
 
 All notable changes to the Attested-Read Envelope spec. Status remains `raw`/experimental throughout.
 
+## v0.6.0-experimental — 2026-06-26
+Discharged the **final two `draft`-blocking caveats** from v0.5: benchmarks, and accept-vector coverage for the
+deep ancestor path and `provider_sig`. Suite goes **7/7 → 10/10**. No fabricated hashes; data fidelity disclosed.
+- **Deep `historical_summaries` ancestor path (step 7b) implemented + vector-locked.** The v0.5 verifier had a
+  `REJECT@step7` *stub* on the deep branch; it now composes the `historical_summaries` generalized index
+  (`are_constants.historical_summaries_leaf_gindex`) and verifies a real SHA-256 Merkle branch of the read block
+  root against `finalized_header.state_root`. New `accept_deep_ancestor.json` — FINALIZED, finalized−read gap
+  20000 > `SLOTS_PER_HISTORICAL_ROOT` (8192), a real depth-41 SHA-256 branch. Tampering the proof → `REJECT@step7`.
+  *Fidelity:* full-fidelity **seeded synthetic** at the Deneb preset (real Keccak/SSZ/BLS, real `historical_summaries`
+  branch; only the outer `BeaconState` siblings seeded — a real mainnet deep proof is unreachable because the public
+  beacon node blocks `/eth/v2/debug/beacon/states` full-state download, the only source of true siblings).
+- **`provider_sig` (step 10) implemented + vector-locked with real ed25519.** The v0.5 verifier had a
+  `REJECT@step10` stub. Step 10 now resolves the verifying key via an **independent** trust path
+  (`VerifierConfig.resolve_provider_key`, never the envelope) and verifies a real ed25519 (RFC 8032, pycryptodome)
+  signature over `hash_tree_root(envelope_without_provider_sig)` (`are_verify.envelope_signing_root`), with explicit
+  dispute/correctness modes. New `accept_provider_sig.json` (dispute mode, accepts) + `reject_bad_provider_sig.json`
+  (tampered sig → `REJECT@step10`). `secp256k1` (sig_alg=1) is spec-declared but not implemented in the reference
+  (no secp256k1 in pycryptodome; no new dependency) — a coverage note, not a soundness gap.
+- **Benchmarks measured (`reference/benchmark.py`), environment stated.** Apple M2 · 8 GB · Python 3.12.2 · macOS
+  26.5 · `py_ecc` pure-Python BLS · native CPython. BLS `FastAggregateVerify` over the real 512 committee (510
+  participants) = **3.82 s** (upper bound; pure-Python), hexary MPT account+storage = **0.07 ms**, SSZ
+  `hash_tree_root(anchor)` = **0.07 ms**, full e2e verify = **3.78 s**. **Clustered** (anchor reused) **0.07 ms/read**
+  vs **scattered** (per-block BLS) **3.82 s/read** — clustered batching ~**56000×** cheaper per read. WASM/native-blst
+  figures are future work, deliberately not fabricated. Replaces the v0.5 "indicative only" note.
+- **`status:` left `raw`** — promotion to `draft` is the editor's call. The spec now states plainly that nothing
+  structurally blocks `draft`.
+
 ## v0.5.0-experimental — 2026-06-26
 Upgraded the reference suite from MINIMAL-preset fixtures to **mainnet fidelity using REAL mainnet data**
 (route 1, the gold standard). This discharges the three v0.4 caveats that blocked `draft`.

@@ -1,16 +1,19 @@
-# ARE reference implementation (v0.5)
+# ARE reference implementation (v0.6)
 
 A Python reference **verifier** (`are_verify.py`) and **vector generators**
-(`are_generate.py`, `are_real_vectors.py`) for the Attested-Read Envelope spec
+(`are_generate.py`, `are_real_vectors.py`, `are_extra_vectors.py`) for the Attested-Read Envelope spec
 ([`../specs/ARE/README.md`](../specs/ARE/README.md)). The verifier implements all
 **10 steps** of §Verification Algorithm in order and returns `ACCEPT` or
 `REJECT@stepN`.
 
-v0.5 upgrades the suite from MINIMAL-preset fixtures to **mainnet fidelity**: a
+v0.5 upgraded the suite from MINIMAL-preset fixtures to **mainnet fidelity**: a
 real hexary Merkle-Patricia verifier, the full 17-field `ExecutionPayloadHeader`,
 and a **real-data** vector built from a live mainnet `eth_getProof` + a real
 Altair/Fulu LightClient `finality_update` + `bootstrap` (a real 512-member sync
-committee and a real aggregate BLS signature). See **What changed in v0.5**.
+committee and a real aggregate BLS signature). v0.6 then closed the last two
+coverage gaps (deep `historical_summaries` ancestor + `provider_sig`) and added a
+measured benchmark harness. See **What changed in v0.6** and **What changed in
+v0.5**.
 
 ## Quick start
 
@@ -20,8 +23,65 @@ python3 -m venv .venv
 cd reference
 ../.venv/bin/python are_generate.py        # (re)generate the MINIMAL vectors
 ../.venv/bin/python are_real_vectors.py     # (re)build accept_mainnet_real.json from ../vectors/real-data/
-../.venv/bin/python run_vectors.py          # MUST print "7/7 passed"
+../.venv/bin/python are_extra_vectors.py    # (re)build the deep-ancestor + provider_sig vectors
+../.venv/bin/python run_vectors.py          # MUST print "10/10 passed"
+../.venv/bin/python benchmark.py            # measured timings (prints a Markdown table)
 ```
+
+## What changed in v0.6 (the last two draft-blockers)
+
+v0.6 discharges the two coverage caveats v0.5 left open, and adds the missing
+benchmark harness:
+
+1. **Deep `historical_summaries` ancestor path (step 7b) now vector-locked.** The
+   v0.5 verifier had a `REJECT@step7` *stub* on the deep branch. It is now a real
+   check: it composes the `historical_summaries` generalized index
+   (`are_constants.historical_summaries_leaf_gindex`) and verifies a real SHA-256
+   Merkle branch of the read block root against `finalized_header.state_root`. New
+   accepting vector **`accept_deep_ancestor.json`** (finalized−read gap = 20000 >
+   8192 → deep path; depth-41 branch). Tampering the proof rejects at step 7.
+2. **`provider_sig` (step 10) now vector-locked with REAL ed25519.** The v0.5
+   verifier had a `REJECT@step10` stub. Step 10 now resolves the verifying key via
+   an **independent** trust path (`VerifierConfig.resolve_provider_key`, never the
+   envelope), and verifies a real ed25519 (RFC 8032, pycryptodome) signature over
+   `hash_tree_root(envelope_without_provider_sig)`
+   (`are_verify.envelope_signing_root`). New accepting vector
+   **`accept_provider_sig.json`** (dispute/audit mode) + bonus reject
+   **`reject_bad_provider_sig.json`** (tampered sig → REJECT@step10).
+3. **Benchmarks** (`benchmark.py`) — measured, environment stated; see the table
+   below. Replaces the v0.5 "indicative only" note.
+
+Suite is now **10/10**. `secp256k1` (sig_alg=1) remains declared-but-unimplemented
+in this reference (pycryptodome has no secp256k1; no new dependency added) — an
+honesty note, not a soundness gap (step-10 control flow is identical via ed25519).
+
+## Benchmarks (measured)
+
+Run `python benchmark.py` to reproduce. Captured environment:
+
+**Apple M2 · 8 GB RAM · Python 3.12.2 · macOS 26.5 (arm64) · py_ecc pure-Python
+BLS12-381 · native CPython.** *(WASM/native-blst not measured — see note.)*
+
+| Operation | Median | Notes |
+|---|---|---|
+| (a) BLS `FastAggregateVerify`, 512-committee | **3818.89 ms** | real mainnet aggregate, 510/512 participants, py_ecc pure-Python |
+| (b) hexary MPT account+storage verify | **0.07 ms** | real WETH `eth_getProof` (9 account + 7 storage nodes) |
+| (c) SSZ `hash_tree_root(anchor)` | **0.07 ms** | full `ConsensusAnchor` incl. 17-field exec header |
+| (d) full end-to-end envelope verify | **3783.90 ms** | all 10 steps; dominated by (a) |
+
+| Regime | Per-read cost | Meaning |
+|---|---|---|
+| **Clustered** (anchor reused) | **0.07 ms** | BLS anchor verified once; each additional read at the same block pays only MPT |
+| **Scattered** (distinct blocks) | **3818.96 ms** | one BLS aggregate verify per distinct block + its MPT |
+
+Clustered batching is **~56000× cheaper per read** than scattered: the BLS verify
+(the dominant cost) is amortized across all reads sharing one anchor — the
+quantitative justification for the spec's "default to batch envelopes" SHOULD.
+
+> The pure-Python `py_ecc` BLS verify dominates and is an **UPPER BOUND**. A
+> production verifier reusing an audited light-client core (Helios, `blst` native
+> or WASM) verifies the same aggregate in single-digit milliseconds. Native-blst
+> and WASM figures are future work and are deliberately **not** fabricated here.
 
 ## Route used: (1) REAL mainnet data
 
@@ -112,27 +172,34 @@ vector; they are coverage/honesty notes:
    is the real consensus check — the *mainnet* vector uses entirely real branches.
 2. **MINIMAL preset = `SYNC_COMMITTEE_SIZE = 32`.** Kept as a fast smoke test
    (BLS over 32 keys is quick); the mainnet vector exercises the real 512.
-3. **Deep-`historical_summaries` ancestor path (step 7) and `provider_sig`
-   (step 10) are not exercised by an accepting vector.** The mainnet vector is a
-   trivial-ancestor FINALIZED case (`read_block_header == finalized_header`); the
-   MINIMAL finalized vector exercises the near-ancestor `state.block_roots` path.
-   Both paths exist in the verifier; the deep path and provider-sig remain
-   uncovered by an accept (control flow present, not vector-locked).
-4. **Benchmarks** (CPU/RAM, native-vs-WASM, clustered-vs-scattered) are still TODO
-   for `draft`. The real 512-pubkey aggregate verifies in ~4 s on an 8 GB laptop
-   (one-time vector build).
+3. **Deep-`historical_summaries` ancestor path (step 7b)** is now vector-locked by
+   `accept_deep_ancestor.json`, BUT that vector is a **full-fidelity seeded
+   synthetic** at the Deneb preset (real Keccak/SSZ/BLS, real SHA-256
+   `historical_summaries` branch; only the *outer* `BeaconState` siblings are
+   seeded random bytes). A real-mainnet deep proof is not reachable: the public
+   beacon node blocks `/eth/v2/debug/beacon/states` (full-state download), the only
+   source of true `historical_summaries` siblings. This matches the fidelity tier
+   of the near-ancestor `accept_balance_finalized.json`. **No hash is fabricated** —
+   every parent is a real SHA-256 reduction along the real gindex.
+4. **`provider_sig` (step 10)** is vector-locked by `accept_provider_sig.json` with
+   **real ed25519** (RFC 8032). `secp256k1` (sig_alg=1) is declared by the spec but
+   not implemented in this reference (no secp256k1 in pycryptodome; no new
+   dependency added) — a coverage note, not a soundness gap.
 
-## The 7 vectors (`../vectors/`)
+## The 10 vectors (`../vectors/`)
 
 | File | Preset | Expected | Exercises |
 |---|---|---|---|
 | `accept_mainnet_real.json` | MAINNET | `ACCEPT` | **REAL** FINALIZED WETH balance + storage slot 0; real 512-committee aggregate (510 participants), real hexary MPT, full ExecutionPayloadHeader, real `finality_branch` @169 |
 | `accept_balance.json` | MINIMAL | `ACCEPT` | OPTIMISTIC balance read; records `signing_root` + `bound_state_root`; 25/32 participants |
-| `accept_balance_finalized.json` | MINIMAL | `ACCEPT` | FINALIZED, near-ancestor `state.block_roots` path |
+| `accept_balance_finalized.json` | MINIMAL | `ACCEPT` | FINALIZED, **near**-ancestor `state.block_roots` path |
+| `accept_deep_ancestor.json` | MINIMAL | `ACCEPT` | FINALIZED, **deep**-ancestor `state.historical_summaries` path (gap 20000 > 8192); real SHA-256 depth-41 branch |
+| `accept_provider_sig.json` | MINIMAL | `ACCEPT` | step 10: **real ed25519** `provider_sig` over `htr(envelope_without_provider_sig)`, independent key resolution, dispute mode |
 | `reject_quorum_too_low.json` | MINIMAL | `REJECT@step3` | 16/32 participation (`2·16 == 32`, not `> 32`) |
 | `reject_bad_bls.json` | MINIMAL | `REJECT@step4` | quorum met, corrupted aggregate signature |
 | `reject_unproven_absence.json` | MINIMAL | `REJECT@step8` | `presence==0` for an address that resolves to an empty branch slot (proven absent) |
 | `reject_mixed_root_batch.json` | MINIMAL | `REJECT@step9` | batch read declaring a `state_root != bound_state_root` |
+| `reject_bad_provider_sig.json` | MINIMAL | `REJECT@step10` | tampered ed25519 `provider_sig` rejected in dispute mode |
 
 Each vector is `{description, preset, envelope, anchor, expected}`. Rejects carry
 the failing step in `expected.result`.
@@ -154,9 +221,12 @@ real bytes in, verified vector out).
 - `are_mpt.py` — Keccak-256, RLP, **real hexary MPT** walk + synthetic 2-leaf
   trie builders for MINIMAL.
 - `are_bls.py` — BLS sign / `FastAggregateVerify` / aggregate.
-- `are_verify.py` — the 10-step verifier + domain/signing-root computation.
+- `are_sig.py` — `provider_sig` (step 10): real ed25519 sign/verify (RFC 8032).
+- `are_verify.py` — the 10-step verifier + domain/signing-root + `envelope_signing_root`.
 - `are_codec.py` — vector JSON (de)serialization (full exec header).
-- `are_generate.py` — seeded MINIMAL vector generator.
+- `are_generate.py` — seeded MINIMAL vector generator (the original 6).
 - `are_real_vectors.py` — MAINNET real-data vector generator (consumes
   `../vectors/real-data/`).
+- `are_extra_vectors.py` — deep-ancestor + provider_sig vector generator (v0.6).
+- `benchmark.py` — measured timing harness (BLS/MPT/SSZ/e2e, clustered-vs-scattered).
 - `run_vectors.py` — loads all vectors (both presets), asserts expected == actual.
