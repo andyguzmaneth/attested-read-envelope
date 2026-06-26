@@ -1,0 +1,148 @@
+{
+  "anchor": {
+    "ancestor_proof": [
+      "0xbf50f33fbf4fdedf7c225bec926c4c1334047171bb8bdacee75f81dc6ea520db",
+      "0xa31ee28ce58b1019585bf30cb8f7f2a6d5f9d0ff81f8638a70e705d6a82bc703",
+      "0x832310f8b711e017e96226ed30abe9c0a51f44d9c05d833c625d932a7ac00a68",
+      "0x17fa527c3e4e3a7b8124b83671ba59dd8593aa66f47e06e7d0ba020f88a8252a",
+      "0xe361046127418d0048333dfc24aef263fc58e443cf4930edc6d9b8c8cd3cfec8",
+      "0xba6d7b74f2170649ea374a6c18d253b2c3c412f5766502bb7d05d4fe8e618ac8",
+      "0x34d5468ee16570a9ca9ae9b7797f967cd7c3a0278c259d30520bf54bec3ebb37",
+      "0x4656fdf7d6c2f80ec0284594854559bc104ecd8a4bea9a0f9b537bbfba674850",
+      "0x2b62a20ec220d60cbaa98c95eacf0e7a64cdba8067f45cebcad94bdafbe1f787",
+      "0xe5824d28e0a88f0e229bf5f5620c0182532f8214d095f1d99639922f299d8a11",
+      "0x8138549810e26511ccbadaacec2ea0dc9652363cafd55d678ae3b01e8b710cf1",
+      "0x99dee9e3783fd69114f8073f030a3494566832987e822c0a65c98f9e54ddfc14",
+      "0xe352526b929b49a80c8c6b9533b6b2909516d5853f9dfd50d5e848ef628ac142",
+      "0xb8544a345b2973ab8d5858b79a5a6e50dd851a3d1150ff43a6385265253d8121",
+      "0xfce3f3ab288a3fa5c29bcc4c75ab0c750afdf0503b25d4edf2307ac05b488cef"
+    ],
+    "attested_header": {
+      "body_root": "0x33766f6c1c2850d4f383d4462d45490bce5ee80016f66355cd1168c5a0657d21",
+      "parent_root": "0x606c107d717b4940c721c4e7781c7de8c0409ad80f28010d49dfa017237760a2",
+      "proposer_index": 1,
+      "slot": 8999990,
+      "state_root": "0x39c2b02c7715c54bbf34b23e5060c75173b198d0d27aa1cc8f5a2072bfb53d64"
+    },
+    "execution_branch": [
+      "0x3a39d836333c0b8a6f30df212ba22db976dc7def63dbe3e15ae12f92439b8293",
+      "0xf9f700792811353e9fd1dcc820c114799d1fb8cef21435685fb4be3054bc2518",
+      "0x2b75d018fa17b3a8d35e596edf3eb35a11a66f6cbcff3d69b3ed8e77ac6724dd",
+      "0x1ab7a4baa629de0d639e61accfdb48a75040f2fb41096ca5eee93119ef4f840f"
+    ],
+    "execution_header": {
+      "block_number": 21000000,
+      "extra_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "state_root": "0x8a678ddafe9ed6d429672bec8cec91e838b3f58a9a3c78a85fdc993b0878f470",
+      "timestamp": 1700000000
+    },
+    "finality_branch": [
+      "0x815080e1a34e9c11c3da17e1646c893ed253995e12eff448b818622820dd2c70",
+      "0x324f70d50c55108b43311bb466c3714dece9969c7ccfddfb594ebbfc111a9ece",
+      "0xe6fd6aa74fa86887f0b100023115f9aa9abc2dd1566afa8dea15a44c5e9087ee",
+      "0xc7d7d3a91aa5841a6eb75df0c5edcce00fe76022ef09b443acbb8c1d5736c4e3",
+      "0xa9b5661b1b050fbe9710a08d2a6fcb27d99cb845db2d2148ab20d69a2dd3eb35",
+      "0xa76eb5b7aa00c7570bf41e34d2cfffaf296b5da28a7e58dae6729443f17c6281"
+    ],
+    "finalized_header": {
+      "body_root": "0xe036c1128b68a289eb479136cca88181af2ce44368ace8213e16eaee99a45859",
+      "parent_root": "0x832f9212737f620227335275ed4a049fc2b59affe45920904d2d00ff155f9819",
+      "proposer_index": 2,
+      "slot": 9000090,
+      "state_root": "0x6ad09041a5d2eefc4c0bce311bfc07c73c072932b35e0de4bede0235d3c4d27f"
+    },
+    "has_finality": true,
+    "read_block_header": {
+      "body_root": "0xeebd855062db9741846c06b69e678d6237fdf5c164ce4c328ec825fecf000389",
+      "parent_root": "0x3a301267ab346cba0789dc5671a1f3cc5e9296dc270ef91b04f1a73f000c0c31",
+      "proposer_index": 1,
+      "slot": 8999990,
+      "state_root": "0xef87b130e4054a897d56d872b4fce223616f006c7612f92e19bc4e4715cb6e76"
+    },
+    "signature_slot": 8999991,
+    "sync_committee_bits": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "sync_committee_signature": "0x837cd31120c3aaae997810d83499555dcb4c8f09132c5f24b6cfbb37bb9edf51e61bb779d614cd0d47b3888b491b91290bfb241c7398876ef5d378972c3885414b63acd4fb2a7acf7cad324a23073bdb2e7b0ec9d1c0da6c9f3e5df94c580f72"
+  },
+  "description": "FINALIZED balance read exercising the NEAR-ancestor state.block_roots path (read_block_header distinct from finalized_header, within 8192 slots).",
+  "envelope": {
+    "anchor_ref": "0xd00edeb0b4c9a58c84438c7f47aa2c46c8b58fc384b258e29639367d0f3b1962",
+    "anchor_type": 0,
+    "beacon_slot": 8999990,
+    "block_number": 21000000,
+    "chain_id": 1,
+    "finality_status": 1,
+    "proof_format": [
+      0,
+      0,
+      0
+    ],
+    "provider_key_hint": "0x",
+    "provider_sig": "0x",
+    "reads": [
+      {
+        "account_proof": [
+          "0xf871a010464726fe701b96a41321ce7ffd90fa4e90ad7b2a5477b7543b51c27f88207eb84ef84c07880de0b6b3a7640000a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a0c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+        ],
+        "address": "0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
+        "presence": 0,
+        "read_kind": 0,
+        "slot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "storage_proof": [],
+        "value": "0x0de0b6b3a7640000"
+      }
+    ],
+    "settlement_layer": 1,
+    "sig_alg": 0,
+    "state_root": "0x8a678ddafe9ed6d429672bec8cec91e838b3f58a9a3c78a85fdc993b0878f470",
+    "timestamp": 1700000000,
+    "version": 1
+  },
+  "expected": {
+    "intermediates": {
+      "bound_state_root": "0x8a678ddafe9ed6d429672bec8cec91e838b3f58a9a3c78a85fdc993b0878f470",
+      "signing_root": "0xa4294a2d5271f722cae4be086796e2a63c7d0283efeb41a3999e8d901d2e0391"
+    },
+    "result": "ACCEPT"
+  },
+  "preset": {
+    "SYNC_COMMITTEE_SIZE": 32,
+    "fork": "deneb",
+    "fork_version": "0x04000000",
+    "genesis_validators_root": "0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95",
+    "name": "MINIMAL",
+    "seed": 42
+  }
+}

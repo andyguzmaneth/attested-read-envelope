@@ -1,0 +1,133 @@
+{
+  "anchor": {
+    "ancestor_proof": [],
+    "attested_header": {
+      "body_root": "0x285a9fb0bd2e9126d33ac4905addb12609b642a2851e2e4e1f87a864024d1520",
+      "parent_root": "0x569a2c126e1035b5b6f68fa1e059120fd4ed9b3ac6254111269bc9e7fbad0a08",
+      "proposer_index": 1,
+      "slot": 8999990,
+      "state_root": "0xc11011dc3cf6965413b5231250bc9f832ddfed3c3b494a47a72042abe71f447c"
+    },
+    "execution_branch": [
+      "0x9fc4526cc07ce0f6216838365e46cdedfb4e0f8a530f59c12ac3dcba5c2a9bb0",
+      "0xdfa27e33e6d283b69aa3cc4ffa5b2466be1bc2fe39adf3ab8e685ea6717c985f",
+      "0xa1532770cb1b4de6b4d97f848f9894739721fa1e1dbe763fcfc385395c006410",
+      "0x9bc68c565980620562669b9603cdcd8d93cce83af202a496b62a60385642d701"
+    ],
+    "execution_header": {
+      "block_number": 21000000,
+      "extra_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "state_root": "0x8a678ddafe9ed6d429672bec8cec91e838b3f58a9a3c78a85fdc993b0878f470",
+      "timestamp": 1700000000
+    },
+    "finality_branch": [],
+    "finalized_header": {
+      "body_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "parent_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "proposer_index": 0,
+      "slot": 0,
+      "state_root": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "has_finality": false,
+    "read_block_header": {
+      "body_root": "0x285a9fb0bd2e9126d33ac4905addb12609b642a2851e2e4e1f87a864024d1520",
+      "parent_root": "0x569a2c126e1035b5b6f68fa1e059120fd4ed9b3ac6254111269bc9e7fbad0a08",
+      "proposer_index": 1,
+      "slot": 8999990,
+      "state_root": "0xc11011dc3cf6965413b5231250bc9f832ddfed3c3b494a47a72042abe71f447c"
+    },
+    "signature_slot": 8999991,
+    "sync_committee_bits": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "sync_committee_signature": "0xb84800bd89462f29efd842375e954054d60f40e287dd0d0b0fa1f00d02908635c3921af4f3c2353e0925bc10b1f25b771519564788a7648979b40fb516a046c114c649437a6599b02bbbe3837119c6c1a2b04e6d2434ba9d60897751e3eb8daf"
+  },
+  "description": "Batch of 2 reads where the second declares a state_root != bound_state_root (packager pairing reserve0@N with reserve1@N+5) -> rejected at \u00a79.",
+  "envelope": {
+    "anchor_ref": "0x21f9ff5f1e4130375724a4bd2cdc0105cbe92ba6878502e4cd56d4e621091c65",
+    "anchor_type": 0,
+    "beacon_slot": 8999990,
+    "block_number": 21000000,
+    "chain_id": 1,
+    "finality_status": 0,
+    "proof_format": [
+      0,
+      0,
+      0
+    ],
+    "provider_key_hint": "0x",
+    "provider_sig": "0x",
+    "reads": [
+      {
+        "account_proof": [
+          "0xf871a010464726fe701b96a41321ce7ffd90fa4e90ad7b2a5477b7543b51c27f88207eb84ef84c07880de0b6b3a7640000a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a0c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+        ],
+        "address": "0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
+        "presence": 0,
+        "read_kind": 0,
+        "slot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "storage_proof": [],
+        "value": "0x0de0b6b3a7640000"
+      },
+      {
+        "account_proof": [
+          "0xf871a010464726fe701b96a41321ce7ffd90fa4e90ad7b2a5477b7543b51c27f88207eb84ef84c07880de0b6b3a7640000a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a0c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+        ],
+        "address": "0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
+        "declared_state_root": "0xdededededededededededededededededededededededededededededededede",
+        "presence": 0,
+        "read_kind": 0,
+        "slot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "storage_proof": [],
+        "value": "0x0de0b6b3a7640000"
+      }
+    ],
+    "settlement_layer": 1,
+    "sig_alg": 0,
+    "state_root": "0x8a678ddafe9ed6d429672bec8cec91e838b3f58a9a3c78a85fdc993b0878f470",
+    "timestamp": 1700000000,
+    "version": 1
+  },
+  "expected": {
+    "result": "REJECT@step9"
+  },
+  "preset": {
+    "SYNC_COMMITTEE_SIZE": 32,
+    "fork": "deneb",
+    "fork_version": "0x04000000",
+    "genesis_validators_root": "0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95",
+    "name": "MINIMAL",
+    "seed": 42
+  }
+}

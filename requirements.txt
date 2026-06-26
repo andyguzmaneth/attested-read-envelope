@@ -1,0 +1,7 @@
+# ARE reference implementation — pinned dependencies (Python 3.12)
+py-ecc==8.0.0
+pycryptodome==3.23.0
+# transitive (pinned for reproducible BLS):
+eth-typing==6.0.0
+eth-utils==6.0.0
+cytoolz==1.1.0
