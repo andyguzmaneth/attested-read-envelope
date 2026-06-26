@@ -1,5 +1,8 @@
 # Attested-Read Envelope (ARE)
 
+![Attested-Read Envelope — abstract verifiable-read landscape](assets/are-cover.png)
+
+
 > ⚠️ **EXPERIMENTAL — DRAFT — NOT AN OFFICIAL STANDARD.**
 > This is an early, unreviewed `raw`-status draft (v0.1) published for open discussion. It has **not** been
 > audited, has **no** reference implementation, ships **no** test vectors yet, and is **subject to change or
