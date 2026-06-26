@@ -9,8 +9,9 @@ head_slot, monotonic floor) is supplied via VerifierConfig.
 """
 
 from are_ssz import (
-    merkleize, uint64_root, bytes32_root, verify_merkle_branch,
-    BeaconBlockHeader,
+    merkleize, uint64_root, uint256_root, bytes32_root, bytes20_root,
+    boolean_root, bytevector_root, bytelist_root, mix_in_length,
+    verify_merkle_branch, BeaconBlockHeader,
 )
 from are_mpt import (
     verify_account_inclusion, verify_account_exclusion,
@@ -18,6 +19,7 @@ from are_mpt import (
     keccak256, be_to_int,
 )
 from are_bls import fast_aggregate_verify
+from are_sig import verify_provider_sig
 import are_constants as C
 
 
@@ -28,7 +30,8 @@ OPTIMISTIC_HEAD, FINALIZED = 0, 1
 
 class VerifierConfig:
     def __init__(self, chain_id, genesis_validators_root, committees,
-                 head_slot, max_staleness_slots, monotonic_max_seen_slot=0):
+                 head_slot, max_staleness_slots, monotonic_max_seen_slot=0,
+                 dispute_mode=False, resolve_provider_key=None):
         self.chain_id = chain_id
         self.genesis_validators_root = genesis_validators_root
         # committees: dict period -> list of 48-byte pubkeys (committee for that period)
@@ -36,6 +39,15 @@ class VerifierConfig:
         self.head_slot = head_slot
         self.max_staleness_slots = max_staleness_slots
         self.monotonic_max_seen_slot = monotonic_max_seen_slot
+        # Step 10: dispute/audit mode means a present provider_sig MUST verify
+        # (else REJECT@step10). In plain correctness mode an uncheckable sig is
+        # tolerated (it carries no correctness weight) — spec §Verification step 10.
+        self.dispute_mode = dispute_mode
+        # resolve_provider_key(provider_key_hint, sig_alg) -> public key bytes,
+        # or None if resolution fails. This stands in for the spec's INDEPENDENT
+        # trust path (ENS / did: / X.509). It MUST NOT read the key from the
+        # envelope; the reference resolver takes it from trusted verifier config.
+        self.resolve_provider_key = resolve_provider_key
 
 
 def compute_domain(domain_type: bytes, fork_version: bytes, gvr: bytes) -> bytes:
@@ -109,6 +121,59 @@ def _bytes96_root(sig: bytes) -> bytes:
     # Bytes96 fixed vector -> 3 chunks merkleized
     assert len(sig) == 96
     chunks = [sig[0:32], sig[32:64], sig[64:96]]
+    return merkleize(chunks)
+
+
+def _read_proof_root(r) -> bytes:
+    """hash_tree_root of one ReadProof container (7 fields, declared order)."""
+    chunks = [
+        (bytes([r.read_kind]) + b"\x00" * 31),               # uint8
+        bytes20_root(r.address),                              # Bytes20
+        bytes32_root(r.slot),                                 # Bytes32
+        bytelist_root(r.value, 128),                          # value (ByteList)
+        merkleize([keccak256(n) for n in r.account_proof] or [b"\x00" * 32],
+                  limit=64),                                  # List[Bytes, MAX_NODES] node roots
+        merkleize([keccak256(n) for n in r.storage_proof] or [b"\x00" * 32],
+                  limit=64),
+        (bytes([r.presence]) + b"\x00" * 31),                # uint8
+    ]
+    return merkleize(chunks)
+
+
+def envelope_signing_root(e) -> bytes:
+    """Canonical hash_tree_root(envelope_without_provider_sig) — the pre-image the
+    packager signs for provider_sig (spec §Cryptographic Primitives + step 10).
+
+    The envelope SSZ container is merkleized field-for-field in declared order with
+    `provider_sig` taken as the EMPTY ByteList (its canonical zero value), so the
+    signed root is independent of the signature it carries. Every other field
+    (including sig_alg and provider_key_hint) IS covered, binding the chosen
+    algorithm and key hint into the signature."""
+    reads_root = mix_in_length(
+        merkleize([_read_proof_root(r) for r in e.reads] or [b"\x00" * 32],
+                  limit=256),
+        len(e.reads))
+    chunks = [
+        (bytes([e.version]) + b"\x00" * 31),                  # uint8
+        uint64_root(e.chain_id),
+        (bytes([e.anchor_type]) + b"\x00" * 31),             # uint8
+        uint64_root(e.settlement_layer),
+        uint64_root(e.block_number),
+        uint64_root(e.beacon_slot),
+        uint64_root(e.timestamp),
+        bytes32_root(e.state_root),
+        merkleize([                                           # ProofFormat container
+            bytes([e.proof_format[0]]) + b"\x00" * 31,
+            bytes([e.proof_format[1]]) + b"\x00" * 31,
+            bytes([e.proof_format[2]]) + b"\x00" * 31,
+        ]),
+        (bytes([e.finality_status]) + b"\x00" * 31),          # uint8
+        bytes32_root(e.anchor_ref),
+        reads_root,
+        (bytes([e.sig_alg]) + b"\x00" * 31),                 # uint8
+        bytelist_root(b"", 256),                              # provider_sig ZEROED
+        bytelist_root(e.provider_key_hint, 256),
+    ]
     return merkleize(chunks)
 
 
@@ -203,9 +268,22 @@ def verify(envelope, anchor, cfg: VerifierConfig):
                     root=a.finalized_header.state_root):
                 return "REJECT@step7"
         else:                                     # DEEP ancestor: historical_summaries
-            # Not exercised by the shipped vectors (near-path used); a deep proof
-            # would verify here against finalized_header.state_root.
-            return "REJECT@step7"
+            # d > SLOTS_PER_HISTORICAL_ROOT: the read block predates the
+            # finalized state's block_roots window, so it is reachable only via
+            # state.historical_summaries[i].block_summary_root[slot mod 8192].
+            # The verifier carries (summary_index) so it can compose the gindex;
+            # we recover it from the proof length-implied path by trusting the
+            # carried index on the anchor (untrusted, but a wrong index simply
+            # fails the branch check below). summary_index = read_slot // 8192.
+            summary_index = a.read_block_header.slot // C.SLOTS_PER_HISTORICAL_ROOT
+            slot_index = a.read_block_header.slot % C.SLOTS_PER_HISTORICAL_ROOT
+            gindex = C.historical_summaries_leaf_gindex(summary_index, slot_index)
+            if not verify_merkle_branch(
+                    leaf=leaf,
+                    branch=a.ancestor_proof,
+                    gindex=gindex,
+                    root=a.finalized_header.state_root):
+                return "REJECT@step7"
 
     # Step 8 — per-read Merkle verification (inclusion AND exclusion)
     for r in e.reads:
@@ -251,15 +329,32 @@ def verify(envelope, anchor, cfg: VerifierConfig):
                 return "REJECT@step9"
 
     # Step 10 — provider signature (if present)
+    provider_sig_ok = None
     if e.sig_alg != 0:
-        # independent key resolution + verify would happen here; not exercised by
-        # the shipped vectors (all sig_alg == 0). A failed check would REJECT@step10
-        # in dispute/audit mode.
-        return "REJECT@step10"
+        # Resolve the verifying key through an INDEPENDENT trust path (never from
+        # the envelope). The reference uses cfg.resolve_provider_key, standing in
+        # for ENS/did:/X.509 resolution; it MUST source the key from trusted
+        # config keyed by provider_key_hint, not from envelope bytes.
+        msg = envelope_signing_root(e)
+        pub = None
+        if cfg.resolve_provider_key is not None:
+            pub = cfg.resolve_provider_key(e.provider_key_hint, e.sig_alg)
+        if pub is None:
+            # resolution failed
+            if cfg.dispute_mode:
+                return "REJECT@step10"      # relied upon -> reject
+            provider_sig_ok = False         # tolerated in correctness mode
+        else:
+            provider_sig_ok = verify_provider_sig(e.sig_alg, pub, msg, e.provider_sig)
+            if not provider_sig_ok and cfg.dispute_mode:
+                return "REJECT@step10"
+            # In plain correctness mode a failed/uncheckable sig is downgraded to
+            # unsigned (carries no correctness weight) — spec §Verification step 10.
 
     return "ACCEPT", {
         "signing_root": signing_root,
         "bound_state_root": bound_state_root,
         "participants": participants,
         "execution_payload_gindex": C.EXECUTION_PAYLOAD_GINDEX,
+        "provider_sig_ok": provider_sig_ok,
     }

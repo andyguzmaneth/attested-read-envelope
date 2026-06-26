@@ -96,6 +96,67 @@ def block_roots_leaf_gindex(slot_index: int) -> int:
     return (BLOCK_ROOTS_FIELD_GINDEX << BLOCK_ROOTS_VECTOR_DEPTH) | slot_index
 
 
+# ---- DEEP-ancestor (historical_summaries) generalized index ----
+# state.historical_summaries is a List[HistoricalSummary, HISTORICAL_ROOTS_LIMIT]
+# where HistoricalSummary = {block_summary_root: Bytes32, state_summary_root: Bytes32}
+# and HISTORICAL_ROOTS_LIMIT = 2**24 (16_777_216). block_summary_root[i] is the
+# hash_tree_root of the Vector[Bytes32, SLOTS_PER_HISTORICAL_ROOT(=8192)] of block
+# roots for historical period i.
+#
+# The full deep path proves: read block root  -->  block_summary_root vector leaf
+#   (slot mod 8192, depth 13)  -->  historical_summaries[i].block_summary_root
+#   (field 0 of the 2-field HistoricalSummary)  -->  historical_summaries list
+#   element i (List, depth 24, then mix_in_length)  -->  state.historical_summaries
+#   field of BeaconState.
+#
+# In the reduced reference BeaconState model used by the MINIMAL/synthetic fixtures
+# the BeaconState is {slot, block_roots, historical_summaries, extra} (4 fields ->
+# field gindices 4..7). historical_summaries is field 2 -> subtree-root gindex 6.
+# This reduced model keeps the SAME inner structure (HistoricalSummary 2-field
+# container; Vector[Bytes32,8192] depth-13 block-root vector) and the SAME real
+# SHA-256 merkleization as mainnet; only the outer BeaconState field count is
+# reduced (there is no full beacon state to derive true outer siblings from — see
+# the honesty note in reference/README.md). The composed gindex below is what the
+# verifier walks and what the synthetic generator builds to, so the two converge.
+HISTORICAL_SUMMARIES_FIELD_GINDEX = 6     # reduced BeaconState: field 2 of 4
+HISTORICAL_ROOTS_LIMIT = 2 ** 24          # mainnet List limit (depth 24)
+HISTORICAL_SUMMARIES_LIST_DEPTH = 24      # log2(HISTORICAL_ROOTS_LIMIT)
+HISTORICAL_SUMMARY_FIELDS_DEPTH = 1       # HistoricalSummary has 2 fields -> depth 1
+BLOCK_SUMMARY_VECTOR_DEPTH = 13           # Vector[Bytes32, 8192] -> depth 13
+
+
+def historical_summaries_leaf_gindex(summary_index: int, slot_index: int) -> int:
+    """Compose the generalized index for the read block root inside
+    state.historical_summaries[summary_index].block_summary_root[slot mod 8192].
+
+    Path (outermost-to-innermost gindex composition):
+      historical_summaries field   (HISTORICAL_SUMMARIES_FIELD_GINDEX)
+        -> List element `summary_index` (depth HISTORICAL_SUMMARIES_LIST_DEPTH).
+           NOTE: an SSZ List root is mix_in_length(merkleize(elements), len), so the
+           elements subtree sits under the LEFT child of the list-field root. We
+           therefore descend one extra level (the '0' bit) into the elements vector
+           before indexing the element. That extra level is represented by shifting
+           the field gindex left by 1 (append a 0 bit) before composing the list.
+        -> HistoricalSummary field 0 = block_summary_root (depth 1, left child -> 0 bit)
+        -> Vector[Bytes32,8192] leaf  (depth BLOCK_SUMMARY_VECTOR_DEPTH).
+    """
+    # field root -> descend into list elements subtree (left child of mix_in_length)
+    g = (HISTORICAL_SUMMARIES_FIELD_GINDEX << 1) | 0
+    # index the list element (depth 24)
+    g = (g << HISTORICAL_SUMMARIES_LIST_DEPTH) | summary_index
+    # HistoricalSummary.block_summary_root is field 0 -> left child (0 bit)
+    g = (g << HISTORICAL_SUMMARY_FIELDS_DEPTH) | 0
+    # the block-root vector leaf at slot mod 8192
+    g = (g << BLOCK_SUMMARY_VECTOR_DEPTH) | slot_index
+    return g
+
+
+# ---- provider_sig (step 10) signature algorithms ----
+SIG_ALG_NONE = 0
+SIG_ALG_SECP256K1 = 1
+SIG_ALG_ED25519 = 2
+
+
 # ---- slot/epoch helpers ----
 SLOTS_PER_EPOCH = 32
 EPOCHS_PER_SYNC_COMMITTEE_PERIOD = 256
