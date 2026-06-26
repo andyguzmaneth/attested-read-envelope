@@ -60,13 +60,32 @@ def run_one(v):
         max_staleness = 64
     else:
         committees = minimal_committee(period)
-        head_slot = 9_000_000
+        # The verifier's own head tracks the attested header (freshness step 6 is a
+        # verifier-config check, not a vector field). Use attested + 8, which holds
+        # for every MINIMAL vector regardless of its (possibly deep-history) read slot.
+        head_slot = anchor.attested_header.slot + 8
         max_staleness = 64
+
+    # provider_sig vectors carry the trusted provider key + dispute flag in
+    # `preset` (the verifier's INDEPENDENT trust config, never the envelope).
+    pcfg = v["preset"]
+    dispute_mode = bool(pcfg.get("dispute_mode", False))
+    resolver = None
+    if "provider_pubkey" in pcfg:
+        trusted_pub = bytes.fromhex(pcfg["provider_pubkey"][2:])
+        trusted_hint = bytes.fromhex(pcfg["provider_key_hint"][2:])
+
+        def resolver(hint, sig_alg, _pub=trusted_pub, _hint=trusted_hint):
+            # INDEPENDENT key resolution: match the hint against trusted config.
+            if hint == _hint and sig_alg == C.SIG_ALG_ED25519:
+                return _pub
+            return None
 
     cfg = VerifierConfig(
         chain_id=1, genesis_validators_root=C.GENESIS_VALIDATORS_ROOT,
         committees=committees, head_slot=head_slot,
-        max_staleness_slots=max_staleness)
+        max_staleness_slots=max_staleness,
+        dispute_mode=dispute_mode, resolve_provider_key=resolver)
     res = verify(env, anchor, cfg)
     return res[0] if isinstance(res, tuple) else res
 

@@ -42,7 +42,7 @@ def ed25519_sign(sk, message: bytes) -> bytes:
 
 def ed25519_verify(pub_raw: bytes, message: bytes, signature: bytes) -> bool:
     try:
-        pub = ECC.import_key(pub_raw, curve_name="ed25519")
+        pub = eddsa.import_public_key(pub_raw)
         verifier = eddsa.new(pub, "rfc8032")
         verifier.verify(message, signature)
         return True
