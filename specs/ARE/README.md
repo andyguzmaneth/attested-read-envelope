@@ -49,7 +49,14 @@ full-fidelity seeded synthetic since the public node blocks full-state download)
 (real ed25519 over hash_tree_root(envelope_without_provider_sig), independent key resolution, dispute mode), plus
 reject_bad_provider_sig.json. Suite 7/7 -> 10/10. status: left raw (editor's call). -->
 
-**Protocol scope: v0.1 · Document revision: 0.6 (2026-06-26).**
+<!-- Document revision 0.7 (2026-06-26): zkspec-rubric review pass. Fixed a D10 cross-section contradiction in
+how fork_version is selected for the signing domain: §Cryptographic Primitives and §Interoperability said "the
+signature slot's epoch" while §Verification step 4 (correctly) said max(signature_slot,1)−1 — reconciled all
+three to step 4. Also corrected §Interoperability's stale "signature_slot = attested+1 rule" to match the struct
+(signature_slot is a carried field > attested_header.slot). Pointed Appendix A at the real-mainnet vector for
+concrete bytes. No struct or algorithm change. -->
+
+**Protocol scope: v0.1 · Document revision: 0.7 (2026-06-26).**
 
 # Change Process
 
@@ -177,8 +184,10 @@ pinned here.
   configuration**, never from envelope bytes (see §Security, domain pinning). For `chain_id = 1` (Ethereum
   mainnet) these are pinned network constants and MUST be:
   - `genesis_validators_root = 0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95`;
-  - `fork_version` selected from the mainnet fork schedule by the epoch of the **signature slot** (see
-    Verification step 4), using the `current_version` of the fork active at that epoch. The mainnet schedule
+  - `fork_version` selected from the mainnet fork schedule by the epoch of the slot **before** the signature
+    slot — `fork_version_slot = max(signature_slot, 1) − 1`, matching consensus-specs (see Verification step 4) —
+    using the `current_version` of the fork active at that epoch. (Keying off the signature slot's *own* epoch is
+    an off-by-one that breaks the domain at a fork-activation boundary.) The mainnet schedule
     (`chain_id = 1`) is pinned here so `signing_root` is reproducible from this document alone:
 
     | Fork | `current_version` | Activation epoch (mainnet) |
@@ -190,7 +199,7 @@ pinned here.
     | Electra | `0x05000000` | 364032 |
     | (later forks) | per consensus-specs `MAINNET` `*_FORK_VERSION` | per `*_FORK_EPOCH` |
 
-    A verifier MUST use the value for the signature slot's epoch, not the latest. For other `chain_id`s the
+    A verifier MUST use the value for `fork_version_slot`'s epoch, not the latest. For other `chain_id`s the
     verifier MUST source the equivalent `*_FORK_VERSION` / `*_FORK_EPOCH` constants from the consensus-specs
     config for that network.
 - **Sync committee size:** `SYNC_COMMITTEE_SIZE = 512`. Period length
@@ -531,8 +540,9 @@ Every value that MUST match across independent implementations for an envelope t
 - BLS12-381 with the Ethereum ciphersuite `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_`; G1 pubkeys, G2
   signatures; aggregate-pubkey-sum semantics.
 - `DOMAIN_SYNC_COMMITTEE = 0x07000000`; `SYNC_COMMITTEE_SIZE = 512`;
-  `EPOCHS_PER_SYNC_COMMITTEE_PERIOD = 256`; the `signature_slot = attested_header.slot + 1` rule (committee
-  period AND `fork_version` are both selected by the signature slot).
+  `EPOCHS_PER_SYNC_COMMITTEE_PERIOD = 256`; `signature_slot` is a carried field `> attested_header.slot` (it is
+  `attested+1` only when that slot is not skipped). The committee period is selected by the **signature slot**;
+  the `fork_version` by **`max(signature_slot, 1) − 1`** (Verification step 4) — the two are not the same slot.
 - The mainnet `fork_version`/activation-epoch schedule and `genesis_validators_root` (§Cryptographic Primitives).
 - The SSZ generalized indices for `execution_branch`, `finality_branch`, and `ancestor_proof` (§Appendix B),
   selected by the slot's fork.
@@ -765,7 +775,8 @@ A verifier holds a trusted bootstrap for period P and `head_slot = 9_000_000`, `
 It receives an OPTIMISTIC single-read envelope: `read_kind = balance`, `address = 0xabcd…`, `value = 0x0de0b6b3a7640000`
 (1 ETH), `block_number = 21_000_000`, `beacon_slot = 8_999_990`, `state_root = 0x1111…`.
 
-Verification trace (the normative sequence; concrete bytes to be filled by the reference implementation):
+Verification trace (the normative sequence; this example is symbolic — for a full set of concrete bytes see the
+real-mainnet vector `vectors/accept_mainnet_real.json` and the recorded intermediates in §Implementation Notes):
 1. chain_id=1/anchor_type=0/version=1 match; `proof_format == {0,0,0}` → pass.
 2. `hash_tree_root(ConsensusAnchor) == anchor_ref` → pass (`has_finality = false`, finality fields zeroed).
 3. `popcount(bits) = 401`; `2*401 = 802 > 512` → quorum pass.

@@ -2,6 +2,17 @@
 
 All notable changes to the Attested-Read Envelope spec. Status remains `raw`/experimental throughout.
 
+## v0.7.0-experimental — 2026-06-26
+zkspec-rubric review pass (one iteration).
+- **Fixed a D10 cross-section contradiction (gating).** How `fork_version` is selected for the BLS signing
+  domain disagreed across three sections: §Cryptographic Primitives and §Interoperability said "the signature
+  slot's epoch" while §Verification step 4 correctly used `max(signature_slot, 1) − 1`. All three now agree on
+  step 4 (the off-by-one would break the domain at a fork-activation boundary).
+- Corrected §Interoperability's stale "`signature_slot = attested_header.slot + 1` rule" to match the struct
+  (`signature_slot` is a carried field `> attested_header.slot`).
+- Appendix A now points at `vectors/accept_mainnet_real.json` for concrete bytes.
+- No struct or algorithm change; verifier + 10/10 vectors unaffected.
+
 ## v0.6.0-experimental — 2026-06-26
 Discharged the **final two `draft`-blocking caveats** from v0.5: benchmarks, and accept-vector coverage for the
 deep ancestor path and `provider_sig`. Suite goes **7/7 → 10/10**. No fabricated hashes; data fidelity disclosed.
