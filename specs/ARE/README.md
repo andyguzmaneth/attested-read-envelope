@@ -3,7 +3,7 @@ date: 2026-06-26
 slug: ARE
 title: ARE/ATTESTED-READ-ENVELOPE
 name: Attested-Read Envelope for Verifiable Ethereum State Reads
-status: raw
+status: draft
 category: Standards Track
 tags: [private-reads, spec, coss, attested-read-envelope, sync-committee, eip-1186, verifiable-reads, correctness]
 editor: Andy Guzman <andres.guzmantoledo@ethereum.org>
@@ -14,8 +14,13 @@ contributors:
   - Sinu
 ---
 
-<!-- COSS note: `slug` is a placeholder identifier for this internal draft; a numeric slug is assigned
-on submission to the registry. `status: raw` is honest — the v0.1 design is still changing. -->
+<!-- COSS note: `slug` is a placeholder identifier; a numeric slug is assigned on submission to the registry.
+`status: draft` (promoted from raw at rev 0.8): the design can be demonstrated — a reference verifier + 10
+passing conformance vectors (incl. a real-mainnet case) exist. Per 1/COSS, draft is a contract between editors
+and implementers; changes are now made in consultation with implementers, not unilaterally. -->
+
+> **Editor's note:** this remains an experimental, unaudited draft published for open discussion. `draft` status
+> signals the design is stable enough to implement against, NOT that it is finalized or endorsed by the EF.
 
 <!-- Document revision 0.4 (2026-06-26): from a second external multi-agent grading round (2 fresh Claude
 instances + Codex gpt-5.5) of v0.3. Fixed a live fork_version off-by-one (now epoch of max(signature_slot,1)-1,
@@ -56,7 +61,11 @@ three to step 4. Also corrected §Interoperability's stale "signature_slot = att
 (signature_slot is a carried field > attested_header.slot). Pointed Appendix A at the real-mainnet vector for
 concrete bytes. No struct or algorithm change. -->
 
-**Protocol scope: v0.1 · Document revision: 0.7 (2026-06-26).**
+<!-- Document revision 0.8 (2026-06-26): editor promoted status raw → draft. Justification: the design "can be
+demonstrated" (1/COSS's bar) — a runnable reference verifier + 10/10 conformance vectors incl. a real-mainnet
+case. No technical/struct/algorithm change in this revision; status + framing only. -->
+
+**Protocol scope: v0.1 · Document revision: 0.8 (2026-06-26) · Status: draft.**
 
 # Change Process
 
@@ -731,7 +740,10 @@ a soundness gap:
 - `provider_sig` coverage uses **ed25519** (real RFC 8032); **secp256k1** (sig_alg=1) is spec-declared but not
   implemented in the reference. Step-10 control flow is identical across both; this is a reference-coverage note.
 
-Promotion of `status:` from `raw` to `draft` is the editor's call and is intentionally left unchanged here.
+**Promoted to `status: draft` at rev 0.8** by the editor: the design can be demonstrated (reference verifier +
+10/10 conformance vectors incl. a real-mainnet case), which is COSS's bar for `raw → draft`. Draft is a contract
+between editors and implementers — subsequent changes are made in consultation, not unilaterally. This does not
+imply audit or EF endorsement; the residual notes above stand.
 
 # References
 

@@ -2,6 +2,13 @@
 
 All notable changes to the Attested-Read Envelope spec. Status remains `raw`/experimental throughout.
 
+## v0.8.0-experimental — 2026-06-26
+- **Editor promoted `status: raw` → `draft`.** Justification (1/COSS's bar): the design "can be demonstrated" —
+  a runnable reference verifier + 10/10 conformance vectors including a real-mainnet case. Draft is a contract
+  between editors and implementers; changes are now made in consultation, not unilaterally.
+- Updated the root README + spec banner/notes to reflect `draft`. No struct/algorithm change — status + framing
+  only. `draft` does NOT imply audit or EF endorsement; the residual notes stand.
+
 ## v0.7.0-experimental — 2026-06-26
 zkspec-rubric review pass (one iteration).
 - **Fixed a D10 cross-section contradiction (gating).** How `fork_version` is selected for the BLS signing

@@ -2,9 +2,11 @@
 
 ![Attested-Read Envelope — abstract verifiable-read landscape](assets/are-cover.png)
 
-> ⚠️ **EXPERIMENTAL — `raw`-status draft (rev 0.6) — NOT AN OFFICIAL STANDARD.**
-> Published for open discussion. Not audited. Subject to change or removal. Do not build production systems
-> against it. It does not represent a finalized position of the Ethereum Foundation or any team.
+> ⚠️ **EXPERIMENTAL — COSS `draft` (rev 0.8) — NOT AN OFFICIAL STANDARD.**
+> `draft` status means the design is stable enough to implement against (it can be demonstrated: a reference
+> verifier + 10/10 conformance vectors incl. a real-mainnet case). It is **not** audited, **not** finalized, and
+> does **not** represent an endorsed position of the Ethereum Foundation or any team. Published for open
+> discussion; changes are now made in consultation with implementers.
 
 A self-describing, offline-replayable envelope for **verifiable Ethereum state reads** — a returned value bound
 to (a) an EIP-1186 Merkle-Patricia proof against an execution `state_root` and (b) an Altair sync-committee
@@ -19,7 +21,7 @@ The only claimed contribution over prior art (EIP-1186, Pureth/EIP-7919, Colibri
 
 | | |
 |---|---|
-| Lifecycle | `raw` (COSS) — document rev 0.6 |
+| Lifecycle | **`draft`** (COSS) — document rev 0.8 |
 | Scope (v0.1) | Static L1 trie reads: `eth_getBalance` / `eth_getStorageAt` / `eth_getCode` / `eth_getTransactionCount` |
 | Out of scope | `eth_call` (computed), logs/receipts, L2, mempool — each needs a different proof shape |
 | Reference impl | ✅ Python — real Keccak/RLP hexary MPT, real BLS12-381 (`py_ecc`), SSZ |
