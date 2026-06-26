@@ -1,18 +1,21 @@
 """
-EIP-1186 Merkle-Patricia proof primitives for the ARE reference impl.
+EIP-1186 Merkle-Patricia proof primitives for the ARE reference impl (v0.5).
 
 Real cryptography: Keccak-256 (Ethereum variant, via pycryptodome) over
-RLP-encoded trie nodes. Account/storage values are RLP-encoded per the
-Ethereum state-trie layout.
+RLP-encoded trie nodes.
 
-HONEST SIMPLIFICATION (documented in reference/README.md): the fixtures use a
-*single-account* MPT. The trie therefore collapses to a single leaf node whose
-key is keccak256(address) and whose value is the RLP account list. The
-"state_root" is keccak256(RLP(leaf_node)). This exercises the real EIP-1186
-node-decoding and keccak/RLP machinery and proves inclusion/exclusion logic
-end-to-end, but it is NOT a full hexary trie with branch/extension nodes (no
-fabricated intermediate hashes — every node hash is a real keccak over real
-RLP). A full-MPT fixture is deferred to `draft` (see spec §Implementation Notes).
+v0.5 UPGRADE: this is now a REAL hexary Merkle-Patricia verifier — it walks
+branch (17-item), extension (2-item, even/odd hex-prefix), and leaf (2-item)
+nodes along the keccak256(key) nibble path, dereferencing child node hashes
+against the proof set, exactly as EIP-1186 `accountProof` / `storageProof`
+require. It verifies real mainnet `eth_getProof` responses (see
+are_real_vectors.py). Inclusion returns the decoded terminal value; exclusion
+verifies a genuine divergent/terminal path (not a truncated one).
+
+The previous v0.4 single-account collapsed trie is removed; the MINIMAL-preset
+vectors are regenerated through this same real hexary verifier (they just use a
+small synthetic 2-account / 2-slot trie built node-by-node — see are_generate.py),
+so there is no longer a "simplified single-account MPT" code path anywhere.
 """
 
 from Crypto.Hash import keccak
@@ -25,7 +28,7 @@ def keccak256(data: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Minimal RLP encode/decode (sufficient for trie nodes + account/storage values)
+# RLP encode/decode (sufficient for trie nodes + account/storage values)
 # ---------------------------------------------------------------------------
 
 def rlp_encode(item):
@@ -105,8 +108,10 @@ def be_to_int(b: bytes) -> int:
 # Account RLP: [nonce, balance, storageRoot, codeHash]
 # ---------------------------------------------------------------------------
 
-EMPTY_STORAGE_ROOT = keccak256(rlp_encode(b""))   # keccak of RLP("") == empty trie root sentinel here
+EMPTY_STORAGE_ROOT = keccak256(rlp_encode(b""))
 EMPTY_CODE_HASH = keccak256(b"")
+# canonical empty MPT root (keccak256(rlp(""))) — geth EmptyRootHash sentinel
+EMPTY_TRIE_ROOT = keccak256(rlp_encode(b""))
 
 
 def encode_account(nonce: int, balance: int, storage_root: bytes, code_hash: bytes) -> bytes:
@@ -124,85 +129,214 @@ def decode_account(rlp_bytes: bytes):
 
 
 # ---------------------------------------------------------------------------
-# Single-account "leaf" trie (documented simplification)
-# A node is RLP([path_key, value]); state_root = keccak256(RLP(node)).
-# account_proof is the single-element list [RLP(node)].
+# Hexary MPT walk
 # ---------------------------------------------------------------------------
 
-def build_single_account_trie(address: bytes, account_rlp: bytes):
-    key = keccak256(address)
-    node = rlp_encode([key, account_rlp])
-    root = keccak256(node)
-    return root, [node]
+def _nibbles(b: bytes):
+    out = []
+    for x in b:
+        out.append(x >> 4)
+        out.append(x & 0x0F)
+    return out
 
+
+def _decode_hp(encoded: bytes):
+    """Decode a hex-prefix (compact) path. Returns (nibbles, is_leaf)."""
+    nibs = _nibbles(encoded)
+    flag = nibs[0]
+    is_leaf = flag >= 2
+    odd = flag & 1
+    rest = nibs[1:] if odd else nibs[2:]
+    return rest, is_leaf
+
+
+class _Absent:
+    pass
+
+
+ABSENT = _Absent()
+
+
+def _walk(key: bytes, proof_nodes, root: bytes):
+    """Walk an EIP-1186 MPT proof for `key` against `root`.
+
+    Returns the terminal value bytes if the key is INCLUDED, or ABSENT if the
+    proof genuinely proves exclusion (terminal divergence / empty branch slot /
+    diverging leaf or extension). Raises ValueError if the proof is malformed,
+    truncated, or hash-inconsistent (these MUST be rejected, never treated as
+    absence)."""
+    nodes_by_hash = {keccak256(n): n for n in proof_nodes}
+    path = _nibbles(key)
+    idx = 0
+    expected = root
+
+    while True:
+        # Empty trie sentinel
+        if expected == EMPTY_TRIE_ROOT:
+            return ABSENT
+        node = nodes_by_hash.get(expected)
+        if node is None:
+            # Spec: a node may be inlined (<32 bytes) but mainnet account/storage
+            # tries are deep enough that all proof nodes are referenced by hash.
+            raise ValueError("proof node missing for hash (truncated proof)")
+        decoded = rlp_decode(node)
+
+        if isinstance(decoded, list) and len(decoded) == 17:
+            # branch node
+            if idx == len(path):
+                # value is at branch[16]
+                val = decoded[16]
+                return val if len(val) > 0 else ABSENT
+            nib = path[idx]
+            child = decoded[nib]
+            if len(child) == 0:
+                return ABSENT  # empty slot -> proven absence
+            idx += 1
+            expected = _next_ref(child, nodes_by_hash)
+            continue
+
+        if isinstance(decoded, list) and len(decoded) == 2:
+            enc_path, is_leaf = _decode_hp(decoded[0])
+            remaining = path[idx:]
+            if is_leaf:
+                if remaining == enc_path:
+                    return decoded[1]   # inclusion
+                return ABSENT           # diverging leaf -> proven absence
+            # extension node
+            if remaining[:len(enc_path)] != enc_path:
+                return ABSENT           # diverging extension -> proven absence
+            idx += len(enc_path)
+            expected = _next_ref(decoded[1], nodes_by_hash)
+            continue
+
+        raise ValueError("malformed MPT node")
+
+
+def _next_ref(child, nodes_by_hash):
+    """Resolve a child reference: either a 32-byte hash, or an inlined node
+    (an RLP list <32 bytes). For inlined nodes we re-serialize and index by hash
+    so the walk loop can fetch them uniformly."""
+    if isinstance(child, bytes):
+        if len(child) == 32:
+            return child
+        raise ValueError("unexpected short hash child")
+    # inlined node (list): index it so the loop can resolve it
+    enc = rlp_encode(child)
+    h = keccak256(enc)
+    nodes_by_hash[h] = enc
+    return h
+
+
+# ---------------------------------------------------------------------------
+# Public API (account / storage inclusion + exclusion)
+# ---------------------------------------------------------------------------
 
 def verify_account_inclusion(address: bytes, account_proof, root: bytes):
     """Return decoded account dict, or None if absent / proof invalid."""
-    if not account_proof:
+    try:
+        val = _walk(keccak256(address), account_proof, root)
+    except ValueError:
         return None
-    node = account_proof[0]
-    if keccak256(node) != root:
+    if val is ABSENT:
         return None
-    decoded = rlp_decode(node)
-    if not isinstance(decoded, list) or len(decoded) != 2:
-        return None
-    key, value = decoded
-    if key != keccak256(address):
-        return None  # path does not lead to this address
-    return decode_account(value)
+    return decode_account(val)
 
 
 def verify_account_exclusion(address: bytes, account_proof, root: bytes) -> bool:
-    """The single-account proof commits a DIFFERENT key; the path for `address`
-    terminates at a node whose stored key != keccak256(address) -> divergent
-    path -> proven absence. We verify the node hashes to root and that the
-    committed key genuinely differs (a real terminal/divergent-path proof, not a
-    truncated one)."""
-    if not account_proof:
+    """True iff the proof genuinely proves `address` is absent from the state
+    trie (a real terminal/divergent-path proof against `root`)."""
+    try:
+        val = _walk(keccak256(address), account_proof, root)
+    except ValueError:
         return False
-    node = account_proof[0]
-    if keccak256(node) != root:
-        return False
-    decoded = rlp_decode(node)
-    if not isinstance(decoded, list) or len(decoded) != 2:
-        return False
-    key, _value = decoded
-    return key != keccak256(address)
-
-
-def build_single_storage_trie(slot: bytes, value_int: int):
-    key = keccak256(slot)
-    stored = rlp_encode(be_trim(value_int))   # EIP-1186 stores RLP(trimmed BE)
-    node = rlp_encode([key, stored])
-    root = keccak256(node)
-    return root, [node]
+    return val is ABSENT
 
 
 def verify_storage_inclusion(slot: bytes, storage_proof, root: bytes):
-    """Return the canonical 32-byte slot value, or None."""
-    if not storage_proof:
+    """Return the canonical integer slot value, or None."""
+    try:
+        val = _walk(keccak256(slot), storage_proof, root)
+    except ValueError:
         return None
-    node = storage_proof[0]
-    if keccak256(node) != root:
+    if val is ABSENT:
         return None
-    decoded = rlp_decode(node)
-    if not isinstance(decoded, list) or len(decoded) != 2:
-        return None
-    key, stored = decoded
-    if key != keccak256(slot):
-        return None
-    inner = rlp_decode(stored)   # RLP-decode the trimmed BE value
+    # storage leaf stores RLP(trimmed-BE value)
+    inner = rlp_decode(val)
     return be_to_int(inner)
 
 
 def verify_storage_exclusion(slot: bytes, storage_proof, root: bytes) -> bool:
-    if not storage_proof:
+    try:
+        val = _walk(keccak256(slot), storage_proof, root)
+    except ValueError:
         return False
-    node = storage_proof[0]
-    if keccak256(node) != root:
-        return False
-    decoded = rlp_decode(node)
-    if not isinstance(decoded, list) or len(decoded) != 2:
-        return False
-    key, _stored = decoded
-    return key != keccak256(slot)
+    return val is ABSENT
+
+
+# ---------------------------------------------------------------------------
+# Synthetic-trie builders (used by are_generate.py for the MINIMAL preset and by
+# are_real_vectors.py is NOT needed — real vectors use real proofs). These build
+# a REAL 2-leaf hexary trie node-by-node (branch + leaves) so the MINIMAL
+# vectors exercise the same real hexary walker as the mainnet ones.
+# ---------------------------------------------------------------------------
+
+def _leaf_node(remaining_nibbles, value: bytes):
+    # encode terminal leaf with hex-prefix (leaf flag = 2/3)
+    odd = len(remaining_nibbles) & 1
+    flag = (3 if odd else 2)
+    nibs = [flag, (0 if not odd else remaining_nibbles[0])]
+    body = remaining_nibbles[1:] if odd else remaining_nibbles
+    # pack nibbles -> bytes
+    if odd:
+        first_byte = (flag << 4) | remaining_nibbles[0]
+        rest = remaining_nibbles[1:]
+    else:
+        first_byte = (flag << 4)
+        rest = remaining_nibbles
+    packed = bytes([first_byte])
+    for i in range(0, len(rest), 2):
+        packed += bytes([(rest[i] << 4) | rest[i + 1]])
+    return rlp_encode([packed, value])
+
+
+def build_two_account_trie(addr_a: bytes, acct_a_rlp: bytes,
+                           addr_b: bytes, acct_b_rlp: bytes):
+    """Build a real hexary trie with two accounts that diverge at the first
+    nibble (a single branch node with two leaf children). Returns
+    (root, proof_for_a, proof_for_b, absent_proof_for_a_neighbour).
+
+    Guarantees the two keys differ in nibble 0 (caller passes suitable addrs)."""
+    ka = keccak256(addr_a)
+    kb = keccak256(addr_b)
+    na = _nibbles(ka)
+    nb = _nibbles(kb)
+    assert na[0] != nb[0], "addresses must diverge at nibble 0 for this builder"
+    leaf_a = _leaf_node(na[1:], acct_a_rlp)
+    leaf_b = _leaf_node(nb[1:], acct_b_rlp)
+    branch = [b""] * 17
+    branch[na[0]] = keccak256(leaf_a)
+    branch[nb[0]] = keccak256(leaf_b)
+    branch_node = rlp_encode(branch)
+    root = keccak256(branch_node)
+    proof_a = [branch_node, leaf_a]
+    proof_b = [branch_node, leaf_b]
+    return root, proof_a, proof_b
+
+
+def build_two_storage_trie(slot_a: bytes, value_a_int: int,
+                           slot_b: bytes, value_b_int: int):
+    ka = keccak256(slot_a)
+    kb = keccak256(slot_b)
+    na = _nibbles(ka)
+    nb = _nibbles(kb)
+    assert na[0] != nb[0], "slots must diverge at nibble 0 for this builder"
+    val_a = rlp_encode(be_trim(value_a_int))
+    val_b = rlp_encode(be_trim(value_b_int))
+    leaf_a = _leaf_node(na[1:], val_a)
+    leaf_b = _leaf_node(nb[1:], val_b)
+    branch = [b""] * 17
+    branch[na[0]] = keccak256(leaf_a)
+    branch[nb[0]] = keccak256(leaf_b)
+    branch_node = rlp_encode(branch)
+    root = keccak256(branch_node)
+    return root, [branch_node, leaf_a], [branch_node, leaf_b]

@@ -25,7 +25,7 @@ from are_ssz import (
     build_merkle_branch,
 )
 from are_mpt import (
-    build_single_account_trie, encode_account, build_single_storage_trie,
+    build_two_account_trie, encode_account, keccak256,
     EMPTY_STORAGE_ROOT, EMPTY_CODE_HASH, be_trim,
 )
 from are_bls import sk_to_pk, sign, aggregate
@@ -44,6 +44,11 @@ VECTORS_DIR = os.path.join(os.path.dirname(__file__), "..", "vectors")
 # ---- shared fixture parameters ----
 CHAIN_ID = 1
 ADDRESS = bytes.fromhex("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcd")
+# NEIGHBOR shares the trie with ADDRESS as a real 2-leaf hexary branch. It must
+# diverge from ADDRESS at the FIRST nibble of keccak256(addr); 0x1111…11 does
+# (verified: ADDRESS->nibble 0x1, NEIGHBOR->nibble 0xe).
+NEIGHBOR = bytes.fromhex("1111111111111111111111111111111111111111")
+ABSENT_ADDR = bytes.fromhex("2222222222222222222222222222222222222222")
 BALANCE_WEI = 10**18                      # 1 ETH
 NONCE = 7
 ATTESTED_SLOT = 8_999_990
@@ -69,8 +74,13 @@ def gen_committee(rng):
 
 
 def make_account_trie(balance=BALANCE_WEI, nonce=NONCE):
+    """Real 2-leaf hexary trie {ADDRESS, NEIGHBOR}. Returns (root, proof_for_ADDRESS).
+    Verified through the SAME real hexary walker as the mainnet vector."""
     acct_rlp = encode_account(nonce, balance, EMPTY_STORAGE_ROOT, EMPTY_CODE_HASH)
-    return build_single_account_trie(ADDRESS, acct_rlp)
+    neighbor_rlp = encode_account(0, 0, EMPTY_STORAGE_ROOT, EMPTY_CODE_HASH)
+    root, proof_a, _proof_b = build_two_account_trie(
+        ADDRESS, acct_rlp, NEIGHBOR, neighbor_rlp)
+    return root, proof_a
 
 
 def make_execution_header(state_root):
@@ -183,6 +193,7 @@ def write_vector(name, description, envelope, anchor, expected):
 
 
 def main():
+    C.select_preset("MINIMAL")
     os.makedirs(VECTORS_DIR, exist_ok=True)
     rng = random.Random(SEED)
     sks, pks = gen_committee(rng)
@@ -259,9 +270,10 @@ def main():
     committees5 = {sig_period: pks5}
     anchor5, sr5, ap5, _ = base_optimistic_anchor(sks5, pks5, rng5, participants=25)
     # bare "zero/not found": claim presence==0 (inclusion) with a value but an
-    # account_proof that does NOT commit ADDRESS (proof is for a different key).
-    other_addr = bytes.fromhex("1111111111111111111111111111111111111111")
-    # account_proof committed under sr5 is for ADDRESS; ask for other_addr w/ presence 0
+    # account_proof that does NOT commit the queried address. ABSENT_ADDR resolves
+    # to an empty branch slot in the real 2-leaf trie -> proven absence, so a
+    # presence==0 (inclusion) claim MUST be rejected at step 8.
+    other_addr = ABSENT_ADDR
     bad_read = ReadProof(read_kind=0, address=other_addr, slot=b"\x00" * 32,
                          value=be_trim(BALANCE_WEI), account_proof=ap5,
                          storage_proof=[], presence=0)
@@ -335,10 +347,12 @@ def build_finalized(sks, pks, rng, committees):
     # attested_header finalizes finalized_header via finality_branch from
     # attested_header.state_root.
     fin_leaf = finalized_header.hash_tree_root()
-    fdepth = C.FINALIZED_ROOT_GINDEX.bit_length() - 1
+    # MINIMAL fixtures are Deneb -> pre-Electra FINALIZED_ROOT_GINDEX (105).
+    fin_gindex = C.FINALIZED_ROOT_GINDEX_PRE_ELECTRA
+    fdepth = fin_gindex.bit_length() - 1
     fsiblings = [rng.randbytes(32) for _ in range(fdepth)]
     finality_branch, attested_state_root = build_merkle_branch(
-        fin_leaf, C.FINALIZED_ROOT_GINDEX, fsiblings)
+        fin_leaf, fin_gindex, fsiblings)
 
     attested = BeaconBlockHeader(
         slot=ATTESTED_SLOT, proposer_index=1,

@@ -89,15 +89,48 @@ def header_from_json(j):
 
 
 def exec_to_json(x: ExecutionPayloadHeader):
+    # FULL 17-field ExecutionPayloadHeader (v0.5).
     return {
-        "state_root": hx(x.state_root), "block_number": x.block_number,
-        "timestamp": x.timestamp, "extra_root": hx(x.extra_root),
+        "parent_hash": hx(x.parent_hash),
+        "fee_recipient": hx(x.fee_recipient),
+        "state_root": hx(x.state_root),
+        "receipts_root": hx(x.receipts_root),
+        "logs_bloom": hx(x.logs_bloom),
+        "prev_randao": hx(x.prev_randao),
+        "block_number": x.block_number,
+        "gas_limit": x.gas_limit,
+        "gas_used": x.gas_used,
+        "timestamp": x.timestamp,
+        "extra_data": hx(x.extra_data),
+        "base_fee_per_gas": str(x.base_fee_per_gas),  # uint256 -> string (JSON-safe)
+        "block_hash": hx(x.block_hash),
+        "transactions_root": hx(x.transactions_root),
+        "withdrawals_root": hx(x.withdrawals_root),
+        "blob_gas_used": x.blob_gas_used,
+        "excess_blob_gas": x.excess_blob_gas,
     }
 
 
 def exec_from_json(j):
-    return ExecutionPayloadHeader(unhx(j["state_root"]), j["block_number"],
-                                  j["timestamp"], unhx(j["extra_root"]))
+    return ExecutionPayloadHeader(
+        state_root=unhx(j["state_root"]),
+        block_number=j["block_number"],
+        timestamp=j["timestamp"],
+        parent_hash=unhx(j["parent_hash"]),
+        fee_recipient=unhx(j["fee_recipient"]),
+        receipts_root=unhx(j["receipts_root"]),
+        logs_bloom=unhx(j["logs_bloom"]),
+        prev_randao=unhx(j["prev_randao"]),
+        gas_limit=j["gas_limit"],
+        gas_used=j["gas_used"],
+        extra_data=unhx(j["extra_data"]),
+        base_fee_per_gas=int(j["base_fee_per_gas"]),
+        block_hash=unhx(j["block_hash"]),
+        transactions_root=unhx(j["transactions_root"]),
+        withdrawals_root=unhx(j["withdrawals_root"]),
+        blob_gas_used=j["blob_gas_used"],
+        excess_blob_gas=j["excess_blob_gas"],
+    )
 
 
 def anchor_to_json(a: ConsensusAnchor):

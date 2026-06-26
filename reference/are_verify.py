@@ -71,9 +71,7 @@ def anchor_hash_tree_root(anchor) -> bytes:
         finality_branch_root = merkleize([], limit=64)
         ancestor_root = merkleize([], limit=64)
 
-    sig_bits_root = merkleize(
-        [(b"".join(b"\x01" if x else b"\x00" for x in anchor.sync_committee_bits)
-          .ljust(32, b"\x00"))], limit=1) if False else _bitvector_root(anchor.sync_committee_bits)
+    sig_bits_root = _bitvector_root(anchor.sync_committee_bits)
 
     chunks = [
         anchor.attested_header.hash_tree_root(),
@@ -92,12 +90,19 @@ def anchor_hash_tree_root(anchor) -> bytes:
 
 
 def _bitvector_root(bits) -> bytes:
-    # Bitvector[32] -> packs into a single 32-byte chunk
-    by = bytearray(32)
+    # Bitvector[N] -> pack N bits little-endian into ceil(N/8) bytes, then
+    # merkleize the 32-byte chunks (Bitvector[32] -> 1 chunk; Bitvector[512] ->
+    # 64 bytes -> 2 chunks).
+    n = len(bits)
+    nbytes = (n + 7) // 8
+    by = bytearray(nbytes)
     for i, b in enumerate(bits):
         if b:
             by[i // 8] |= (1 << (i % 8))
-    return bytes(by)
+    chunks = [bytes(by[j:j + 32]).ljust(32, b"\x00") for j in range(0, max(nbytes, 1), 32)]
+    if not chunks:
+        chunks = [b"\x00" * 32]
+    return merkleize(chunks)
 
 
 def _bytes96_root(sig: bytes) -> bytes:
@@ -172,11 +177,14 @@ def verify(envelope, anchor, cfg: VerifierConfig):
     if a.has_finality != (e.finality_status == FINALIZED):
         return "REJECT@step7"
     if e.finality_status == FINALIZED:
-        # (a) finalized_header from attested_header.state_root
+        # (a) finalized_header from attested_header.state_root.
+        # FINALIZED_ROOT_GINDEX is fork-versioned by the ATTESTED header's slot
+        # (105 pre-Electra, 169 Electra+/Fulu).
+        fin_gindex = C.finalized_root_gindex_for_attested_slot(a.attested_header.slot)
         if not verify_merkle_branch(
                 leaf=a.finalized_header.hash_tree_root(),
                 branch=a.finality_branch,
-                gindex=C.FINALIZED_ROOT_GINDEX,
+                gindex=fin_gindex,
                 root=a.attested_header.state_root):
             return "REJECT@step7"
         # (b) read block is finalized_header itself or a proven ancestor
