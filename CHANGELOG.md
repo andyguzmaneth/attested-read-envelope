@@ -2,6 +2,34 @@
 
 All notable changes to the Attested-Read Envelope spec. Status remains `raw`/experimental throughout.
 
+## v0.5.0-experimental — 2026-06-26
+Upgraded the reference suite from MINIMAL-preset fixtures to **mainnet fidelity using REAL mainnet data**
+(route 1, the gold standard). This discharges the three v0.4 caveats that blocked `draft`.
+- **REAL hexary Merkle-Patricia verifier** (`reference/are_mpt.py`). Replaces the v0.4 single-account *collapsed*
+  trie with a genuine EIP-1186 walk over branch (17-item) / extension (2-item, even-odd hex-prefix) / leaf nodes,
+  dereferencing each child by its keccak hash and handling inlined nodes. Verifies a **real mainnet `eth_getProof`**
+  for WETH (`0xC02a…Cc2`): a 9-node account proof + 7-node storage-slot-0 proof against the finalized EL state
+  root. Exclusion verifies a genuine empty-branch-slot / diverging terminus; truncated/inconsistent proofs are
+  rejected. The "simplified MPT" code path is **gone** — MINIMAL fixtures now use a real 2-leaf hexary trie and the
+  same walker.
+- **FULL 17-field Deneb+ `ExecutionPayloadHeader`** (`reference/are_ssz.py`). All fields (`logs_bloom` as
+  `ByteVector[256]`, `extra_data` as `ByteList[32]`, `base_fee_per_gas` as `uint256`, blob fields, …) merkleized
+  with real SHA-256; `hash_tree_root` matches a **real beacon `body_root`** via `execution_branch` @ gindex 25.
+- **MAINNET preset (`SYNC_COMMITTEE_SIZE = 512`) + real BLS aggregate.** New `accept_mainnet_real.json`
+  (`reference/are_real_vectors.py`) verifies a real aggregate over **510/512** real period-1787 committee pubkeys,
+  real Fulu `fork_version 0x06000000`, real `genesis_validators_root`, real `finality_branch` @ gindex 169
+  (Electra+/Fulu). Provenance: beacon `finality_update` (attested slot 14640721, finalized 14640640, sig slot
+  14640722) + `bootstrap` + execution `eth_getProof` at **exec block 25404693**, EL state root
+  `0xf6c792621f2a4df8b83abcaf1c72aff30c571fcfb14533ebefd5327b2b53f2a1`. Raw source bytes preserved under
+  `vectors/real-data/`. Recorded intermediates: `signing_root = 0x000fd44e…51af0`, `bound_state_root =
+  0xf6c79262…53f2a1`.
+- **Fork support extended to Fulu** (the real data's fork; shares Electra's SSZ layout). The verifier now selects
+  `FINALIZED_ROOT_GINDEX` by the attested header's fork (105 pre-Electra, 169 Electra+).
+- **`run_vectors.py` now covers both presets** — 7/7 passing (1 MAINNET real + 2 MINIMAL accept + 4 MINIMAL
+  reject). No fabricated hashes anywhere.
+- **Remaining for `draft`:** benchmarks (CPU/RAM, native-vs-WASM, clustered-vs-scattered); accept-vector coverage
+  for the deep `historical_summaries` ancestor path and `provider_sig`.
+
 ## v0.4.0-experimental — 2026-06-26
 Third external multi-agent grading round (2 fresh Claude instances + Codex gpt-5.5) of v0.3. Applies the
 converged fix set and ships the long-open reference implementation.

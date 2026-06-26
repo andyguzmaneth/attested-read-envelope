@@ -1,10 +1,16 @@
-# ARE reference implementation (v0.4, MINIMAL preset)
+# ARE reference implementation (v0.5)
 
-A Python reference **verifier** (`are_verify.py`) and **vector generator**
-(`are_generate.py`) for the Attested-Read Envelope spec
+A Python reference **verifier** (`are_verify.py`) and **vector generators**
+(`are_generate.py`, `are_real_vectors.py`) for the Attested-Read Envelope spec
 ([`../specs/ARE/README.md`](../specs/ARE/README.md)). The verifier implements all
 **10 steps** of §Verification Algorithm in order and returns `ACCEPT` or
 `REJECT@stepN`.
+
+v0.5 upgrades the suite from MINIMAL-preset fixtures to **mainnet fidelity**: a
+real hexary Merkle-Patricia verifier, the full 17-field `ExecutionPayloadHeader`,
+and a **real-data** vector built from a live mainnet `eth_getProof` + a real
+Altair/Fulu LightClient `finality_update` + `bootstrap` (a real 512-member sync
+committee and a real aggregate BLS signature). See **What changed in v0.5**.
 
 ## Quick start
 
@@ -12,107 +18,145 @@ A Python reference **verifier** (`are_verify.py`) and **vector generator**
 python3 -m venv .venv
 .venv/bin/pip install -r ../requirements.txt
 cd reference
-../.venv/bin/python are_generate.py     # (re)generate ../vectors/*.json
-../.venv/bin/python run_vectors.py      # MUST print "6/6 passed"
+../.venv/bin/python are_generate.py        # (re)generate the MINIMAL vectors
+../.venv/bin/python are_real_vectors.py     # (re)build accept_mainnet_real.json from ../vectors/real-data/
+../.venv/bin/python run_vectors.py          # MUST print "7/7 passed"
 ```
 
-## Determinism
+## Route used: (1) REAL mainnet data
 
-All randomness comes from a **single fixed seed**: `random.seed(42)` (the seed is
-the constant `SEED = 42` in `are_generate.py` and `run_vectors.py`). It seeds:
+Per the task's two acceptable routes, this suite uses **route (1) — real mainnet
+data (the gold standard)**, not the full-synthetic fallback. Every byte in
+`accept_mainnet_real.json` comes from live mainnet, captured once and preserved
+under [`../vectors/real-data/`](../vectors/real-data/) for reproducibility:
 
-- **committee key generation** — the 32 BLS secret keys are drawn from the seeded
-  RNG (reduced mod the BLS12-381 subgroup order), and
-- **synthetic Merkle siblings** for the `execution_branch`, `finality_branch`, and
-  `ancestor_proof`.
+| Input | Source | Captured fact |
+|---|---|---|
+| `eth_getProof` (WETH account + storage slot 0) | `ethereum-rpc.publicnode.com` | account proof (9 hexary nodes) + storage proof (7 nodes) at exec block **25404693** |
+| LightClient `finality_update` | `ethereum-beacon-api.publicnode.com` | attested slot **14640721**, finalized slot **14640640**, signature slot **14640722**, real `sync_aggregate` (510/512), full execution payloads, `finality_branch` |
+| LightClient `bootstrap` | `ethereum-beacon-api.publicnode.com` (block root `0xb0cfd5f1…31a7`) | the real **512** `current_sync_committee` pubkeys (the trusted config) |
 
-BLS `Sign` is deterministic given the key, and SHA-256/Keccak are deterministic,
-so **re-running `are_generate.py` produces byte-identical `vectors/*.json`** (the
-build is reproducible; verified by regenerate-and-diff). `run_vectors.py`
-rebuilds the same committee pubkeys from the seed (committees are trusted config,
-not carried inside a vector).
+- **Source EL state root:** `0xf6c792621f2a4df8b83abcaf1c72aff30c571fcfb14533ebefd5327b2b53f2a1`
+  (exec block 25404693). The real WETH account proof roots to exactly this root.
+- **Fork:** Fulu, `current_version = 0x06000000`, sync-committee period **1787**.
+- **No hash is ever fabricated.** The real-data vector contains only bytes that
+  were on mainnet; the verifier accepts them end-to-end.
 
-`signature_slot` is carried as **data** (`attested_header.slot + 1` in the
-fixtures) and is *not* recomputed by the verifier; `fork_version` is computed by
-the verifier from `epoch_of(max(signature_slot, 1) - 1)`, per v0.4.
+## What changed in v0.5 (the draft-blocker work)
+
+The v0.4 caveats named three simplifications that blocked `draft`. All three are
+now discharged:
+
+1. **REAL hexary Merkle-Patricia verifier** (`are_mpt.py`). The v0.4
+   single-account *collapsed* trie is **removed**. `_walk()` is a genuine EIP-1186
+   walk: it follows the `keccak256(key)` nibble path through **branch (17-item),
+   extension (2-item, even/odd hex-prefix), and leaf (2-item)** nodes,
+   dereferencing each child node by its keccak hash against the proof set, and
+   handling inlined (<32-byte) nodes. It verifies a **real mainnet WETH account
+   proof and storage-slot proof**. Exclusion verifies a genuine empty-branch-slot
+   or diverging-leaf/extension terminus; a truncated/hash-inconsistent proof
+   raises and is rejected (never silently treated as absence). The MINIMAL
+   fixtures now build a real 2-leaf hexary trie and verify through the *same*
+   walker — there is no longer any "simplified MPT" code path.
+
+2. **FULL 17-field `ExecutionPayloadHeader`** (`are_ssz.py`). Replaces the v0.4
+   reduced 4-leaf model. All Deneb+ fields (`parent_hash`, `fee_recipient`,
+   `state_root`, `receipts_root`, `logs_bloom` as `ByteVector[256]`,
+   `prev_randao`, `block_number`, `gas_limit`, `gas_used`, `timestamp`,
+   `extra_data` as `ByteList[32]`, `base_fee_per_gas` as `uint256`, `block_hash`,
+   `transactions_root`, `withdrawals_root`, `blob_gas_used`, `excess_blob_gas`)
+   are merkleized with real SHA-256. Its `hash_tree_root` matches the real beacon
+   `body_root` via the real `execution_branch` at `EXECUTION_PAYLOAD_GINDEX = 25`.
+
+3. **MAINNET preset — `SYNC_COMMITTEE_SIZE = 512`, real BLS aggregation**
+   (`are_constants.py`, `are_real_vectors.py`). The real-data vector verifies the
+   real aggregate signature over **510 of the 512** real committee pubkeys with
+   `py_ecc` `FastAggregateVerify`, the real Fulu `fork_version 0x06000000` (from
+   `epoch_of(signature_slot − 1)`), the real `genesis_validators_root`, and the
+   real `finality_branch` at `FINALIZED_ROOT_GINDEX = 169` (Electra+/Fulu). The
+   verifier now selects the finalized-root gindex by the attested header's fork
+   (105 pre-Electra, 169 Electra+).
+
+The recorded intermediates for the mainnet vector:
+`signing_root = 0x000fd44e62c984d7c201807dc607688818fdca4716cadbd827ce34b393551af0`,
+`bound_state_root = 0xf6c792621f2a4df8b83abcaf1c72aff30c571fcfb14533ebefd5327b2b53f2a1`.
 
 ## What is REAL cryptography here
 
 - **BLS12-381**, Ethereum `G2ProofOfPossession` ciphersuite
   `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_` (via `py_ecc`). G1 pubkeys, G2
-  signatures, `FastAggregateVerify`.
-- **Keccak-256** (Ethereum variant, via `pycryptodome`) + **RLP** for the
-  EIP-1186 account/storage proof nodes.
-- **SSZ `hash_tree_root`** over **SHA-256** for all beacon objects, the
-  `ConsensusAnchor`, the signing domain (`compute_domain` / `compute_signing_root`
-  / `ForkData` / `SigningData`), and every Merkle branch (verified by
-  generalized index).
+  signatures, `FastAggregateVerify`. Mainnet vector = a real 510/512 aggregate.
+- **Keccak-256** (Ethereum variant, via `pycryptodome`) + **RLP** for a real
+  hexary EIP-1186 account/storage proof walk.
+- **SSZ `hash_tree_root`** over **SHA-256** for all beacon objects, the full
+  `ExecutionPayloadHeader`, the `ConsensusAnchor`, the signing domain
+  (`compute_domain` / `compute_signing_root` / `ForkData` / `SigningData`), and
+  every Merkle branch (verified by generalized index; `merkleize` uses correct
+  zero-subtree padding for any limit).
 - **Real mainnet** `genesis_validators_root`
-  `0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95` and the
-  Deneb `fork_version` `0x04000000`.
+  `0x4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95`, real fork
+  schedule (Altair…Fulu), real WETH proof, real sync committee.
 
 **No hash is ever fabricated.** Every parent node in every Merkle tree is a real
 SHA-256 (consensus) or Keccak-256 (MPT) reduction of its children.
 
-## Honest simplifications (documented, not hidden)
+## Honest scope: what is still synthetic / not yet covered
 
-These are the deliberate reductions vs a mainnet-512 production verifier. They
-let the verification *logic* be exercised end-to-end while staying small and
-deterministic; each is also flagged in the spec's §Implementation Notes caveats.
+These do **not** affect the cryptographic soundness exercised by the mainnet
+vector; they are coverage/honesty notes:
 
-1. **MINIMAL preset.** `SYNC_COMMITTEE_SIZE = 32` (quorum `2·popcount > 32`), not
-   512. A single fork (Deneb) is active for all fixture slots, so
-   `fork_version_at_epoch` returns the Deneb version.
-2. **Single-account MPT** (`are_mpt.py`). The state/storage trie collapses to a
-   single leaf node `RLP([keccak256(key), value])`; `state_root =
-   keccak256(RLP(node))`. This is **real Keccak over real RLP** — but it is NOT a
-   full hexary trie with branch/extension nodes. Inclusion verifies the node
-   hashes to the root and commits the queried key; exclusion verifies a genuine
-   divergent-key terminal node (not a truncated path). A full-MPT fixture is
-   deferred to `draft`.
-3. **Reduced `ExecutionPayloadHeader`** (`are_ssz.py`). Modeled as a 4-leaf SSZ
-   container `{state_root, block_number, timestamp, extra_root}` instead of the
-   17-field mainnet header. The `execution_branch` is therefore a genuine SSZ
-   Merkle proof against a real leaf — just a narrower object. We keep
-   `EXECUTION_PAYLOAD_GINDEX = 25` to match the spec's documented value.
-4. **Synthetic Merkle siblings.** For `execution_branch`, `finality_branch`, and
-   `ancestor_proof`, the *sibling* hashes are seeded-random 32-byte values (there
-   is no full beacon state to derive true siblings from), but the **root each
-   branch proves to is the real SHA-256 reduction along the gindex path** — so
-   the branch genuinely commits to the leaf. `verify_merkle_branch` is the real,
-   unmodified consensus check.
-5. **Reduced `BeaconState` for the near-ancestor path.** The
-   `accept_balance_finalized.json` vector exercises the v0.4 near-ancestor
-   `state.block_roots` path. The `block_roots` leaf generalized index is composed
-   as `(BLOCK_ROOTS_FIELD_GINDEX << 13) | (slot mod 8192)` against a reduced
-   `BeaconState` model; the concrete integer is **locked by that vector**.
-6. **Steps 4 (deep-ancestor branch), 10 (provider_sig) not exercised by accepts.**
-   The shipped vectors use the near-ancestor path and `sig_alg == 0`. The
-   deep-`historical_summaries` branch and provider-signature verification are
-   present in the verifier's control flow but not covered by an accepting vector.
+1. **The two MINIMAL accept/reject fixtures use seeded synthetic Merkle siblings**
+   for `execution_branch` / `finality_branch` / `ancestor_proof` (there is no full
+   beacon state to derive true siblings from). The root each branch proves to is
+   still the real SHA-256 reduction along the gindex path, and `verify_merkle_branch`
+   is the real consensus check — the *mainnet* vector uses entirely real branches.
+2. **MINIMAL preset = `SYNC_COMMITTEE_SIZE = 32`.** Kept as a fast smoke test
+   (BLS over 32 keys is quick); the mainnet vector exercises the real 512.
+3. **Deep-`historical_summaries` ancestor path (step 7) and `provider_sig`
+   (step 10) are not exercised by an accepting vector.** The mainnet vector is a
+   trivial-ancestor FINALIZED case (`read_block_header == finalized_header`); the
+   MINIMAL finalized vector exercises the near-ancestor `state.block_roots` path.
+   Both paths exist in the verifier; the deep path and provider-sig remain
+   uncovered by an accept (control flow present, not vector-locked).
+4. **Benchmarks** (CPU/RAM, native-vs-WASM, clustered-vs-scattered) are still TODO
+   for `draft`. The real 512-pubkey aggregate verifies in ~4 s on an 8 GB laptop
+   (one-time vector build).
 
-## The 6 vectors (`../vectors/`)
+## The 7 vectors (`../vectors/`)
 
-| File | Expected | Exercises |
-|---|---|---|
-| `accept_balance.json` | `ACCEPT` | OPTIMISTIC balance read; records `signing_root` + `bound_state_root`; 25/32 participants |
-| `accept_balance_finalized.json` | `ACCEPT` | FINALIZED, near-ancestor `state.block_roots` path |
-| `reject_quorum_too_low.json` | `REJECT@step3` | 16/32 participation (`2·16 == 32`, not `> 32`) |
-| `reject_bad_bls.json` | `REJECT@step4` | quorum met, corrupted aggregate signature |
-| `reject_unproven_absence.json` | `REJECT@step8` | `presence==0` for an address the proof doesn't commit |
-| `reject_mixed_root_batch.json` | `REJECT@step9` | batch read declaring a `state_root != bound_state_root` |
+| File | Preset | Expected | Exercises |
+|---|---|---|---|
+| `accept_mainnet_real.json` | MAINNET | `ACCEPT` | **REAL** FINALIZED WETH balance + storage slot 0; real 512-committee aggregate (510 participants), real hexary MPT, full ExecutionPayloadHeader, real `finality_branch` @169 |
+| `accept_balance.json` | MINIMAL | `ACCEPT` | OPTIMISTIC balance read; records `signing_root` + `bound_state_root`; 25/32 participants |
+| `accept_balance_finalized.json` | MINIMAL | `ACCEPT` | FINALIZED, near-ancestor `state.block_roots` path |
+| `reject_quorum_too_low.json` | MINIMAL | `REJECT@step3` | 16/32 participation (`2·16 == 32`, not `> 32`) |
+| `reject_bad_bls.json` | MINIMAL | `REJECT@step4` | quorum met, corrupted aggregate signature |
+| `reject_unproven_absence.json` | MINIMAL | `REJECT@step8` | `presence==0` for an address that resolves to an empty branch slot (proven absent) |
+| `reject_mixed_root_batch.json` | MINIMAL | `REJECT@step9` | batch read declaring a `state_root != bound_state_root` |
 
 Each vector is `{description, preset, envelope, anchor, expected}`. Rejects carry
 the failing step in `expected.result`.
 
+## Determinism
+
+The MINIMAL vectors derive all randomness from `random.seed(42)` (committee keys
++ synthetic siblings), so re-running `are_generate.py` is byte-reproducible. The
+MAINNET vector is **data-reproducible**: `are_real_vectors.py` rebuilds it
+deterministically from the fixed real inputs in `../vectors/real-data/` (no RNG;
+real bytes in, verified vector out).
+
 ## Files
 
-- `are_constants.py` — preset + domain constants, gindices, slot/epoch helpers.
-- `are_ssz.py` — SSZ merkleization, `BeaconBlockHeader`, reduced
-  `ExecutionPayloadHeader`, `verify_merkle_branch` / `build_merkle_branch`.
-- `are_mpt.py` — Keccak-256, RLP, single-account trie inclusion/exclusion.
+- `are_constants.py` — MINIMAL/MAINNET presets, real fork schedule (Altair…Fulu),
+  gindices, slot/epoch helpers.
+- `are_ssz.py` — SSZ merkleization (zero-subtree padding), `BeaconBlockHeader`,
+  **full 17-field** `ExecutionPayloadHeader`, `verify_merkle_branch`.
+- `are_mpt.py` — Keccak-256, RLP, **real hexary MPT** walk + synthetic 2-leaf
+  trie builders for MINIMAL.
 - `are_bls.py` — BLS sign / `FastAggregateVerify` / aggregate.
 - `are_verify.py` — the 10-step verifier + domain/signing-root computation.
-- `are_codec.py` — vector JSON (de)serialization.
-- `are_generate.py` — seeded vector generator (run to (re)produce vectors).
-- `run_vectors.py` — loads all 6 vectors, asserts expected == actual.
+- `are_codec.py` — vector JSON (de)serialization (full exec header).
+- `are_generate.py` — seeded MINIMAL vector generator.
+- `are_real_vectors.py` — MAINNET real-data vector generator (consumes
+  `../vectors/real-data/`).
+- `run_vectors.py` — loads all vectors (both presets), asserts expected == actual.
