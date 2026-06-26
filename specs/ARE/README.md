@@ -17,15 +17,16 @@ contributors:
 <!-- COSS note: `slug` is a placeholder identifier for this internal draft; a numeric slug is assigned
 on submission to the registry. `status: raw` is honest — the v0.1 design is still changing. -->
 
-<!-- Document revision 0.3 (2026-06-26): from external multi-agent grading (2 fresh Claude instances + Codex
-gpt-5.5). Added execution_header + execution_branch so state_root/block_number/timestamp are verified SSZ leaves
-(was: execution_block_number with no backing field); re-rooted the ancestor_proof at finalized_header.state_root
-via historical_summaries (was: hash_tree_root(finalized_header) — a hard crypto break); rewrote the
-sync-committee handoff/domain in terms of signature_slot = attested_header.slot + 1; pinned the mainnet
-fork-version schedule and the SSZ generalized indices (new §Appendix B); dropped a non-normative "MUST read".
-Test vectors (D9) remain the one open gating gap, pending the reference implementation. -->
+<!-- Document revision 0.4 (2026-06-26): from a second external multi-agent grading round (2 fresh Claude
+instances + Codex gpt-5.5) of v0.3. Fixed a live fork_version off-by-one (now epoch of max(signature_slot,1)-1,
+matching consensus-specs); made signature_slot an explicit carried anchor field (not attested+1, which breaks on
+skipped slots); added the near-ancestor state.block_roots path for ancestor_proof (v0.3 only covered deep
+history) with the block-root leaf-identity note; printed concrete Electra gindices and scoped v0.1 to Deneb+
+Electra, removing the "nothing unprinted" overclaim; SHIPPED concrete test vectors + a Python reference verifier
+(reference/, vectors/) — 2 accept + 4 reject, all passing. Mainnet-512 vectors / full-MPT / benchmarks remain
+for draft. -->
 
-**Protocol scope: v0.1 · Document revision: 0.3 (2026-06-26).**
+**Protocol scope: v0.1 · Document revision: 0.4 (2026-06-26).**
 
 # Change Process
 
@@ -232,7 +233,10 @@ ProofFormat {
 # == false, the finality fields take their canonical zero/empty values (see below). Referenced by
 # envelope.anchor_ref; NOT inlined per envelope on the wire.
 ConsensusAnchor {
-    attested_header:    BeaconBlockHeader      # sync-committee-signed header (provides the BLS signature)
+    attested_header:    BeaconBlockHeader      # sync-committee-signed header
+    signature_slot:     uint64                  # slot of the block that CONTAINS the sync aggregate; MUST be
+                                               # > attested_header.slot (== attested_header.slot + 1 only when that
+                                               # slot is not skipped). Selects the signing committee period AND fork.
     sync_committee_bits: Bitvector[512]
     sync_committee_signature: Bytes96          # BLS aggregate over the attested_header signing root
 
@@ -280,6 +284,7 @@ trust obligation.
 1. Resolve the read(s) at a chosen `block_number` against an execution node; obtain each value and its EIP-1186
    `accountProof`/`storageProof` (including exclusion proofs where the account or slot is absent).
 2. Obtain, from a beacon node, the `ConsensusAnchor`: the sync-committee-signed `attested_header`, the
+   `signature_slot` (the slot whose block carries the aggregate), the
    `sync_committee_bits` + aggregate signature, the `read_block_header` (equal to `attested_header` in OPTIMISTIC
    mode), its `execution_header` (carrying the EL `state_root`, `block_number`, `timestamp`), and the
    `execution_branch` proving `execution_header` against `read_block_header.body_root`.
@@ -323,22 +328,25 @@ constraint list; each numbered item is a soundness constraint.
    A merely "valid BLS aggregate" is INSUFFICIENT: a genuinely-signed sub-quorum (e.g. 200/512) verifies but does
    not meet the protocol's safety threshold. This check is mandatory and MUST NOT be skipped.
 
-4. **Sync-committee signature.** The signature is produced in the slot **after** the attested header. Define the
-   `signature_slot := anchor.attested_header.slot + 1` and select the committee and fork by the *signature slot*:
+4. **Sync-committee signature.** The signature lives in the block at `anchor.signature_slot` (a carried field,
+   NOT computed as `attested + 1` — a skipped slot pushes it later). Select the committee by the signature slot's
+   period, and the signing-domain fork by the slot **before** the signature slot (matching consensus-specs
+   `fork_version_slot = max(signature_slot, 1) − 1`):
    ```
-   signature_slot := anchor.attested_header.slot + 1
-   sig_period     := compute_sync_committee_period_at_slot(signature_slot)
-   # the committee active during sig_period: store.current_sync_committee if sig_period == store period,
-   # else store.next_sync_committee (the standard Altair current/next handoff selection)
+   assert(anchor.signature_slot > anchor.attested_header.slot)
+   sig_period := compute_sync_committee_period_at_slot(anchor.signature_slot)
+   # committee active during sig_period: store.current_sync_committee if sig_period == store finalized period,
+   # else store.next_sync_committee (the standard Altair current/next handoff, relative to the store period)
    committee := select_committee(sig_period)
    participating_pubkeys := [ committee.pubkeys[i] for i where sync_committee_bits[i] ]
-   domain  := compute_domain(DOMAIN_SYNC_COMMITTEE, fork_version_at_epoch(epoch_of(signature_slot)), genesis_validators_root)
+   fork_version_slot := max(anchor.signature_slot, 1) - 1
+   domain  := compute_domain(DOMAIN_SYNC_COMMITTEE, fork_version_at_epoch(compute_epoch_at_slot(fork_version_slot)), genesis_validators_root)
    signing_root := compute_signing_root(anchor.attested_header, domain)
    assert(bls.FastAggregateVerify(participating_pubkeys, signing_root, anchor.sync_committee_signature) == true)
    ```
-   Both the committee period and the `fork_version` are computed from the **signature slot**, not the attested
-   slot — they differ only at a period/fork boundary, which is exactly where a naive `attested_slot` computation
-   breaks. `fork_version` and `genesis_validators_root` come from trusted config (step inputs), never the envelope.
+   The committee period comes from the signature slot; the `fork_version` comes from `signature_slot − 1` (these
+   differ at a fork-activation boundary — using the signature slot's own epoch is an off-by-one that breaks the
+   domain at that boundary). `fork_version` and `genesis_validators_root` come from trusted config, never the envelope.
 
 5. **Execution binding (cross-field).** Prove the `execution_header` against the signed beacon header, then read
    `state_root`/`block_number`/`timestamp` from it — do NOT trust the envelope's copies as bare fields:
@@ -376,21 +384,31 @@ constraint list; each numbered item is a soundness constraint.
        branch = anchor.finality_branch,
        gindex = FINALIZED_ROOT_GINDEX,                    # see Appendix B (fork-versioned: 105 pre-Electra, 169 Electra+)
        root   = anchor.attested_header.state_root ) == true)
-   # (b) the read block is finalized_header itself, or a proven ancestor reachable from the FINALIZED STATE:
+   # (b) the read block is finalized_header itself, or a proven ancestor reachable from the FINALIZED STATE.
+   #     LEAF IDENTITY: for a BeaconBlockHeader, hash_tree_root(header) == the block root accumulated in state,
+   #     so the ancestor leaf below is that block root.
+   leaf := hash_tree_root(anchor.read_block_header)
+   d := anchor.finalized_header.slot - anchor.read_block_header.slot
    if anchor.read_block_header == anchor.finalized_header:
        assert(anchor.ancestor_proof is empty)            # trivial case
-   else:
-       assert(verify_historical_ancestor(
-           leaf   = hash_tree_root(anchor.read_block_header),
-           branch = anchor.ancestor_proof,
-           root   = anchor.finalized_header.state_root ) == true)  # NOT hash_tree_root(finalized_header)
+   elif d <= SLOTS_PER_HISTORICAL_ROOT:                  # NEAR ancestor (within 8192 slots): use state.block_roots
+       assert(verify_merkle_branch(
+           leaf, anchor.ancestor_proof,
+           gindex = BLOCK_ROOTS_GINDEX composed with (read_block_header.slot % SLOTS_PER_HISTORICAL_ROOT),
+           root   = anchor.finalized_header.state_root ) == true)
+   else:                                                 # DEEP ancestor: use state.historical_summaries
+       assert(verify_merkle_branch(
+           leaf, anchor.ancestor_proof,
+           gindex = HISTORICAL_SUMMARIES_GINDEX composed with (read_block_header.slot, block_summary index),
+           root   = anchor.finalized_header.state_root ) == true)
    ```
-   The ancestor proof is rooted at **`finalized_header.state_root`**, because the `historical_summaries`
-   accumulator that links an older block to the finalized chain lives in `BeaconState`, not in a block header.
-   `verify_historical_ancestor` walks `finalized_header.state_root → state.historical_summaries[…] → block_summary_root
-   → read_block_header root` (gindices in §Appendix B). An envelope labelled FINALIZED without verifiable
-   `finality_branch` + `ancestor_proof` MUST be rejected. An `OPTIMISTIC_HEAD` envelope MUST NOT be accepted as
-   dispute/audit evidence (see §Verifier obligations).
+   The ancestor proof is rooted at **`finalized_header.state_root`** (NOT `hash_tree_root(finalized_header)`),
+   because both accumulators that link an ancestor to the finalized chain — `block_roots` for blocks within the
+   most recent `SLOTS_PER_HISTORICAL_ROOT = 8192` slots, and `historical_summaries` for older blocks — live in
+   `BeaconState`. The common FINALIZED case (read block within minutes of finality) takes the **`block_roots`**
+   path; the deep-history case takes `historical_summaries`. Gindices in §Appendix B. An envelope labelled
+   FINALIZED without a verifiable `finality_branch` + `ancestor_proof` MUST be rejected. An `OPTIMISTIC_HEAD`
+   envelope MUST NOT be accepted as dispute/audit evidence (see §Verifier obligations).
 
 8. **Per-read Merkle verification (inclusion AND exclusion).** For each `ReadProof r` in `envelope.reads`, the
    account trie is rooted at `bound_state_root` (from step 5) and, for storage, at the account's `storageRoot`:
@@ -602,19 +620,28 @@ material verifies. Implementations MUST NOT overstate a replayed OPTIMISTIC enve
 
 # Implementation Notes
 
-Reference implementation: TBD (Reads team). It SHOULD reuse an existing Altair light-client verifier (e.g. the
-Helios verification core) for steps 3–7 and an EIP-1186 verifier for step 8, so ARE is a thin wire-format and
-audit layer over audited components rather than new cryptography.
+Reference implementation: a Python reference verifier + vector generator ships in [`reference/`](../../../../reference/)
+(real Keccak-256/RLP, real BLS12-381 via `py_ecc`, SSZ `hash_tree_root`). A production implementation SHOULD
+reuse an audited Altair light-client verifier (e.g. the Helios verification core) for steps 3–7 and an EIP-1186
+verifier for step 8, so ARE is a thin wire-format and audit layer over audited components rather than new
+cryptography.
 
-**Test vectors (conformance contract).** This spec's central claim — byte-for-byte cross-implementation
-verification — is NOT yet discharged: v0.1 ships the worked verification *sequence* in §Appendix A but does
-**not** yet ship concrete byte vectors (a fixed envelope → expected accept/reject with intermediate
-`signing_root`, `bound_state_root`, and per-read results). This is the single most important gap to close
-before requesting `draft` status. Implementations MUST provide, and this spec MUST eventually embed, at least:
-1. one accepting static-balance envelope with all intermediate values, and
-2. one rejecting envelope per failure class in §Error Handling.
-Benchmarks, when given, MUST state CPU/RAM, native-vs-WASM, and clustered-vs-scattered read pattern (the
-"sub-ms per read" figure holds only for clustered reads at one already-verified anchor).
+**Test vectors (conformance contract).** v0.1 ships concrete vectors in [`vectors/`](../../../../vectors/), each
+a fixed `{envelope, anchor}` → expected accept/reject (with the failing step for rejects). They are generated by
+`reference/are_generate.py` and re-checked by `reference/run_vectors.py`:
+1. `accept_balance.json` — accepting static-balance read (Appendix A), OPTIMISTIC, with recorded intermediates
+   `signing_root = 0x09a363f1…a9c2`, `bound_state_root = 0xcbd47b40…b806`, `EXECUTION_PAYLOAD_GINDEX = 25`,
+   25/32 participants;
+2. `accept_balance_finalized.json` — the FINALIZED path;
+3. `reject_quorum_too_low` (step 3), `reject_bad_bls` (step 4), `reject_unproven_absence` (step 8),
+   `reject_mixed_root_batch` (step 9) — one per failure class.
+
+**Caveats (honest, not hidden):** these are **MINIMAL-preset** vectors — `SYNC_COMMITTEE_SIZE = 32` (quorum
+`2·popcount > 32`), fork Deneb (`fork_version = 0x04000000`), real mainnet `genesis_validators_root`. They prove
+the verification *logic* end-to-end; they are **not** mainnet-512 vectors and the account proof uses a documented
+**simplified single-account MPT** (real Keccak over RLP nodes, no fabricated hashes, but not a full hexary trie
+with extension nodes). Mainnet-512 vectors, a full-MPT fixture, and benchmarks (which MUST state CPU/RAM,
+native-vs-WASM, clustered-vs-scattered) remain required before `draft` status.
 
 # References
 
@@ -662,9 +689,10 @@ Verification trace (the normative sequence; concrete bytes to be filled by the r
 1. chain_id=1/anchor_type=0/version=1 match; `proof_format == {0,0,0}` → pass.
 2. `hash_tree_root(ConsensusAnchor) == anchor_ref` → pass (`has_finality = false`, finality fields zeroed).
 3. `popcount(bits) = 401`; `2*401 = 802 > 512` → quorum pass.
-4. `signature_slot = 8_999_991`; committee for `compute_sync_committee_period_at_slot(8_999_991)` selected;
-   aggregate 401 pubkeys; `domain` from mainnet `genesis_validators_root` + the fork_version at the *signature
-   slot's* epoch; `FastAggregateVerify(signing_root, sig) == true` → pass.
+4. `anchor.signature_slot = 8_999_991` (carried field; `> 8_999_990` → pass); committee for
+   `compute_sync_committee_period_at_slot(8_999_991)` selected; aggregate 401 pubkeys; `domain` from mainnet
+   `genesis_validators_root` + fork_version at `epoch_of(8_999_991 − 1)`; `FastAggregateVerify(signing_root, sig)
+   == true` → pass.
 5. `verify_merkle_branch(hash_tree_root(execution_header), execution_branch, EXECUTION_PAYLOAD_GINDEX,
    read_block_header.body_root)` → pass; `execution_header.state_root == 0x1111…`,
    `execution_header.block_number == 21_000_000`, `execution_header.timestamp == envelope.timestamp`,
@@ -682,23 +710,31 @@ treat it as head-relative, not finalized, and MUST NOT archive it as canonical e
 
 # Appendix B — SSZ generalized indices (fork-versioned)
 
-Every Merkle branch in `ConsensusAnchor` is verified against a **fixed generalized index** for the fork active
-at the relevant slot. Independent verifiers MUST walk identical paths; the gindices are therefore pinned here
-(values are the consensus-specs constants — fork-versioned, so a verifier selects by the slot's fork). For
-`chain_id = 1`:
+Every Merkle branch in `ConsensusAnchor` is verified against a **fixed generalized index**, selected by the fork
+of a specific slot (named per branch below). Independent verifiers MUST walk identical paths. v0.1 normatively
+supports the **Deneb and Electra** forks on mainnet; the concrete gindices are:
 
-| Branch | Constant (consensus-specs) | Value | Proves |
-|---|---|---|---|
-| `execution_branch` | `EXECUTION_PAYLOAD_GINDEX` | `25` (Capella–Deneb `BeaconBlockBody`) | `execution_header` is `body.execution_payload` |
-| `finality_branch` | `FINALIZED_ROOT_GINDEX` | `105` (Altair–Deneb) · `169` (Electra+) | `finalized_header` root from `attested_header.state_root` |
-| `ancestor_proof` (step a) | `HISTORICAL_SUMMARIES_GINDEX` | per fork `BeaconState` layout | `historical_summaries` list from `finalized_header.state_root` |
-| `ancestor_proof` (step b) | derived within `historical_summaries[i].block_summary_root` | computed from the read slot | `read_block_header` root within the block-roots accumulator |
-| committee branches | `CURRENT_SYNC_COMMITTEE_GINDEX = 54`, `NEXT_SYNC_COMMITTEE_GINDEX = 55` | (Altair–Deneb) · Electra+ remapped | committee from a bootstrap/update header (bootstrap path) |
+| Branch | Constant | Deneb (& Capella) | Electra | Gindex selected by | Proves |
+|---|---|---|---|---|---|
+| `execution_branch` | `EXECUTION_PAYLOAD_GINDEX` | `25` | `25` (unchanged — `BeaconBlockBody` ≤ 16 fields) | `read_block_header` slot's fork | `execution_header` == `body.execution_payload` |
+| `finality_branch` | `FINALIZED_ROOT_GINDEX` | `105` | `169` | **`attested_header` slot's fork** | `hash_tree_root(finalized_header)` from `attested_header.state_root` |
+| `ancestor_proof` (near, `d ≤ 8192`) | `get_generalized_index(BeaconState, 'block_roots', slot mod 8192)` | derive | derive | `finalized_header` slot's fork | read block root in `state.block_roots[slot mod 8192]` |
+| `ancestor_proof` (deep, `d > 8192`) | `get_generalized_index(BeaconState, 'historical_summaries', i, 'block_summary_root', slot mod 8192)` | derive | derive | `finalized_header` slot's fork | read block root in `state.historical_summaries[i].block_summary_root[…]` |
+| committee (bootstrap) | `CURRENT_SYNC_COMMITTEE_GINDEX` / `NEXT_SYNC_COMMITTEE_GINDEX` | `54` / `55` | `86` / `87` | bootstrap header's fork | sync committee from a trusted bootstrap/update |
 
-A verifier MUST reject a branch whose length is inconsistent with the gindex for the fork at the slot. The
-authoritative source is the consensus-specs `light-client` constants for the network; this table is the pinned
-`MAINNET` selection and is locked by the test vectors (§Implementation Notes) once they exist. Where a future
-fork remaps a gindex (as Electra did for `FINALIZED_ROOT_GINDEX`), the verifier selects by the slot's fork.
+`SLOTS_PER_HISTORICAL_ROOT = 8192`. Three gindices are grader-/spec-verified integers (`EXECUTION_PAYLOAD = 25`;
+`FINALIZED_ROOT = 105` Deneb / `169` Electra; committee `54/55` Deneb / `86/87` Electra). The two `ancestor_proof`
+indices are given as the **deterministic SSZ derivation** `get_generalized_index(BeaconState_<fork>, …)` rather
+than a hardcoded integer: the derivation is reproducible from the fork's `BeaconState` definition, and the
+concrete integers are **locked by the test vectors** (§Implementation Notes) so two implementers converge. The
+state-relative gindices changed at Electra because `BeaconState` gained fields (deeper tree);
+`EXECUTION_PAYLOAD_GINDEX` is block-body-relative and stays `25` while the body has ≤ 16 fields.
+
+A verifier MUST reject a branch whose length/index is inconsistent with the gindex for the selecting fork. The
+authoritative source is the `ethereum/consensus-specs` `light-client` constants; the values above are the
+`MAINNET` selection for the v0.1-supported forks and are locked by the test vectors (§Implementation Notes). A
+fork outside the supported set MUST be rejected by a v0.1 verifier until its gindices are added (this is a scope
+boundary, not a deferral — the table above is complete for the forks v0.1 claims to support).
 
 # Copyright
 
