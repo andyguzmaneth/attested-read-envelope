@@ -9,9 +9,6 @@ tags: [private-reads, spec, coss, attested-read-envelope, sync-committee, eip-11
 editor: Andy Guzman <andres.guzmantoledo@ethereum.org>
 contributors:
   - Andy Guzman <andres.guzmantoledo@ethereum.org>
-  - Andrew Morris
-  - Keewoo Lee
-  - Sinu
 ---
 
 <!-- COSS note: `slug` is a placeholder identifier; a numeric slug is assigned on submission to the registry.
